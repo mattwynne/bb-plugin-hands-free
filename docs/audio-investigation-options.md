@@ -188,7 +188,7 @@ This is the clearest discriminating result so far: changing player reuse, while 
 
 The evidence-supported production candidate is one retained, already-played media cue player for the pre-speech and post-speech cues, using the same unboosted WAV—not merely allocating an unused player earlier. That candidate should not carry over the experimental 8× amplification. Applying it to the full workflow still requires testing capture, thinking audio, cancellation, navigation, and repeated replies. The production application below follows this evidence, without claiming acoustic success before device testing.
 
-### Production application (awaiting device confirmation)
+### Production application (first full-flow report: no clear improvement)
 
 - `createVoiceCues()` now owns one retained local WAV player. Ready-at-open, recording-start, finish-dictating, and post-reply cues all replay it; no new post-speech cue element or source is created.
 - The default WAV now uses unboosted peak gain `0.14`, identical to the diagnostic WAV. The experimental 8× compensation and its clipped samples are removed.
@@ -197,3 +197,15 @@ The evidence-supported production candidate is one retained, already-played medi
 - Regression tests cover player identity through recording → finish → both streamed and device replies, repeated device replies, cancellation during the delayed cue, late speech callbacks, and disposal. PCM tests verify production and diagnostic WAVs are byte-identical and unboosted. Typecheck, all 38 tests, and build pass in the working checkout.
 
 The isolated comparison supports player reuse, but capture plus thinking audio plus real reply playback remains an on-device validation step. The tested benefit assumes this page's cue player has actually played before speech; entering the page mid-reply without an earlier cue is not covered by that evidence. These mocked tests cannot establish perceived volume, clarity, or native audio routing.
+
+The user subsequently reported that normal Voice Drive did not seem much different, and displayed “Speech playback failed” despite audible speech. The production volume goal is therefore **not confirmed**. The isolated player comparison remains useful evidence but was insufficient to establish a full-flow solution. Repeated identical “Test.” replies also encounter the existing text-based reply deduplication, so repeated checks are not necessarily repeated speech cycles; that behavior is unchanged in this patch.
+
+### False speech-failure warning: completion/cancellation race
+
+Code tracing found that the end callback and four-silent-check fallback call `finishPlayback(true)`, which calls `speechSynthesis.cancel()` while the utterance's error handler is still active and its playback generation still current. A cancellation error at this point could overwrite successful completion with the failure notice. A synchronous error could also re-enter `finishPlayback` before its cleanup timer is assigned, scheduling the cue twice. This cancellation path predated the shared-player change; the phone's exact error event was not logged, so its involvement on this device is a hypothesis, not retrospective proof.
+
+Regression tests reproduced the false warning with both explicit end and silence-fallback completion, delivering cleanup errors synchronously and through queued callbacks. Active failure cases also reproduced duplicate cue scheduling. The fix latches a single terminal outcome and detaches utterance handlers **before** cancellation/cleanup. Queued callbacks check that latch and the playback generation. Genuine first errors, including `interrupted`, remain visible; cancellation-like codes are not globally suppressed. A synchronous terminal callback during `speak()` cannot be overwritten by the later setup of monitoring/reading status.
+
+A separate `speechDiagnostic` RPC records only a random playback ID, fixed event/error-code enums, and bounded elapsed time. The client caps this at 16 records per utterance; both diagnostic RPCs share the existing 120-record/minute server limit. Unknown error codes become `unknown`; no utterance objects, conversation text, transcripts, recordings, or freeform error details are sent. Logs use the `speech-playback` prefix and distinguish normal end, silence-fallback completion, active errors, and ignored late events. These can test the hypothesis if a warning recurs.
+
+This patch does not change source gain, player reuse, microphone behavior, session policy, thinking audio, the one-second cue gap, or cleanup timing. It fixes lifecycle handling and adds observation, not another speculative volume adjustment. Typecheck, all 48 tests, and build pass in the working checkout; the next device run must validate the warning behavior.

@@ -190,6 +190,100 @@ it("retains the same local cue player across device replies, Stop, and late spee
   expect(revokeObjectURL).toHaveBeenCalledOnce();
 });
 
+it.each(["end-sync", "end-queued", "silence-sync", "silence-queued", "active-error", "active-interrupted-error", "unknown-error", "speak-sync-error", "stopped"] as const)(
+  "settles device speech once and distinguishes cleanup cancellation from failure: %s", async (mode) => {
+    const play = vi.fn(async () => {});
+    vi.stubGlobal("URL", { createObjectURL: () => "blob:cue", revokeObjectURL: vi.fn() });
+    vi.stubGlobal("Audio", class {
+      play = play;
+      pause() {} removeAttribute() {} load() {}
+    });
+    type SpeechError = { error: string; message?: string };
+    let utterance: FakeUtterance | undefined;
+    let queuedError: ((event: SpeechError) => void) | null = null;
+    class FakeUtterance {
+      lang = "";
+      onstart: (() => void) | null = null;
+      onend: (() => void) | null = null;
+      onerror: ((event: SpeechError) => void) | null = null;
+      constructor(_text: string) { utterance = this; }
+    }
+    let cancellationDelivered = false;
+    const synth = {
+      speaking: false,
+      speak: vi.fn((value: FakeUtterance) => {
+        queuedError = value.onerror;
+        synth.speaking = true;
+        value.onstart?.();
+        if (mode === "speak-sync-error") value.onerror?.({ error: "synthesis-failed" });
+      }),
+      cancel: vi.fn(() => {
+        synth.speaking = false;
+        if (!utterance || cancellationDelivered) return;
+        cancellationDelivered = true;
+        const callback = mode.endsWith("queued") ? queuedError : utterance.onerror;
+        const notify = () => callback?.({ error: "interrupted" });
+        if (mode.endsWith("queued")) queueMicrotask(notify);
+        else notify();
+      }),
+    };
+    vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
+    vi.stubGlobal("speechSynthesis", synth);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 404 })));
+    const diagnostic = vi.fn(async (_args: unknown) => ({ recorded: true }));
+    slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
+      sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
+      rpc: {
+        state: async () => ({ state: "ready" }),
+        latest: async () => ({ text: "Private reply" }),
+        speechDiagnostic: diagnostic,
+      },
+    });
+    await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
+    vi.useFakeTimers();
+    await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+    expect(synth.speak).toHaveBeenCalledOnce();
+    await act(async () => {
+      if (mode.startsWith("silence")) {
+        await vi.advanceTimersByTimeAsync(300); // observe speech before testing the fallback
+        synth.speaking = false;
+        await vi.advanceTimersByTimeAsync(1200);
+      } else if (mode.startsWith("active-") || mode === "unknown-error") {
+        utterance!.onerror?.({
+          error: mode === "active-error" ? "synthesis-failed" : mode === "active-interrupted-error" ? "interrupted" : "Private error",
+          message: "Private detail",
+        });
+      } else if (mode === "stopped") {
+        fireEvent.click(slot!.getByRole("button", { name: "■ Stop audio" }));
+      } else {
+        utterance!.onend?.();
+      }
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    const failure = slot.queryByText("Speech playback failed. Read the reply on screen.");
+    if (mode.endsWith("error")) expect(failure).not.toBeNull();
+    else expect(failure).toBeNull();
+    expect(play).toHaveBeenCalledTimes(mode === "stopped" ? 1 : 2); // never schedule duplicate ready cues
+    expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
+    // A callback already queued by the browser must be harmless even after detachment.
+    await act(async () => {
+      for (let i = 0; i < 40; i++) queuedError?.({ error: "interrupted", message: "Private detail" });
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(play).toHaveBeenCalledTimes(mode === "stopped" ? 1 : 2);
+    if (!mode.endsWith("error")) expect(slot.queryByText("Speech playback failed. Read the reply on screen.")).toBeNull();
+    expect(diagnostic).toHaveBeenCalled();
+    expect(diagnostic.mock.calls.length).toBeLessThanOrEqual(16);
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain("Private");
+    if (mode.endsWith("error")) {
+      expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({
+        event: "error", errorCode: mode === "unknown-error" ? "unknown" : mode === "active-interrupted-error" ? "interrupted" : "synthesis-failed",
+      }));
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
 it("locks the microphone during agent work and unlocks it after a silent idle or failure", async () => {
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
