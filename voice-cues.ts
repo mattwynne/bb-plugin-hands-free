@@ -1,22 +1,38 @@
-// Small local Web Audio cues; no downloaded files, persistent audio stream,
-// or network requests. Playback is best effort under iOS user-gesture rules.
-export const READY_CUE_GAIN = 0.14;
+import { createMediaReadyCue, type MediaReadyCue } from "./media-ready-cue";
+
+// Reuse one local media player for all confirmation cues. Web Audio is only
+// for the quiet thinking pulse. No network or audio-session policy changes.
 
 export interface VoiceCues {
   unlock(): void;
-  ready(): void;
+  ready(): Promise<boolean>;
   finished(): void;
+  stopCue(): void;
   startThinking(): void;
   stopThinking(): void;
   dispose(): void;
 }
 
 export function createVoiceCues(): VoiceCues {
+  let readyCue: MediaReadyCue | null = null;
   let context: AudioContext | null = null;
   let loop: ReturnType<typeof setInterval> | null = null;
   let firstPulse: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
   let thinking = false;
+
+  const playReady = async (): Promise<boolean> => {
+    if (disposed) return false;
+    try {
+      readyCue ??= createMediaReadyCue();
+      if (!readyCue) return false;
+      readyCue.audio.currentTime = 0;
+      // Reuse the player actually heard before speech, not just an earlier
+      // allocation. A blocked attempt retains it for the next user tap.
+      await readyCue.audio.play();
+      return !disposed;
+    } catch { return false; }
+  };
 
   const ensure = (): AudioContext | null => {
     if (disposed) return null;
@@ -61,11 +77,9 @@ export function createVoiceCues(): VoiceCues {
   };
   return {
     unlock() { void activate(); },
-    // About 8 dB above the old 0.055 gain; audible on an iPhone speaker
-    // without making the periodic thinking pulse equally loud.
-    ready() { cue([[523, 0], [659, 0.23]], READY_CUE_GAIN, false, 0.28); },
-    // Keep the exact same tone as ready while calibrating perceived volume.
-    finished() { cue([[523, 0], [659, 0.23]], READY_CUE_GAIN, false, 0.28); },
+    ready: playReady,
+    finished() { void playReady(); },
+    stopCue() { readyCue?.audio.pause(); }, // retain source/player for the next cue
     startThinking() {
       if (disposed || thinking) return;
       thinking = true;
@@ -87,7 +101,10 @@ export function createVoiceCues(): VoiceCues {
       loop = null;
     },
     dispose() {
+      if (disposed) return;
       disposed = true;
+      readyCue?.dispose();
+      readyCue = null;
       thinking = false;
       if (firstPulse !== null) clearTimeout(firstPulse);
       firstPulse = null;

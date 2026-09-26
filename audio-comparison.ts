@@ -1,5 +1,4 @@
-import { createMediaReadyCue, type MediaReadyCue } from "./media-ready-cue";
-import { READY_CUE_GAIN } from "./voice-cues";
+import { createMediaReadyCue, READY_CUE_GAIN, type MediaReadyCue } from "./media-ready-cue";
 import type { AudioComparisonEvent, AudioComparisonMode } from "./audio-comparison-events";
 
 export interface AudioComparison { stop(): void }

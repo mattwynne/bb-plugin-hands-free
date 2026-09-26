@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { definePluginApp, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import { createVoiceCues, type VoiceCues } from "./voice-cues";
-import { createMediaReadyCue, type MediaReadyCue } from "./media-ready-cue";
 import { AudioTestPage } from "./audio-test-page";
 
 // Web Speech is not part of every iOS WebView. Keep the keyboard-dictation
@@ -44,7 +43,6 @@ function VoicePage({ subPath }: { subPath: string }) {
   const recordingStream = useRef<MediaStream | null>(null);
   const recordingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
-  const mediaReadyCue = useRef<MediaReadyCue | null>(null);
   const playbackCleanupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechMonitor = useRef<ReturnType<typeof setInterval> | null>(null);
   const sequence = useRef(0);
@@ -82,48 +80,37 @@ function VoicePage({ subPath }: { subPath: string }) {
       audio.current.load();
       audio.current = null;
     }
-    mediaReadyCue.current?.dispose();
-    mediaReadyCue.current = null;
+    cues.current?.stopCue(); // stop playback, but keep the already-used cue player
     window.speechSynthesis?.cancel();
     setSpeaking(false);
   }, []);
 
-  const finishPlayback = useCallback((testMediaCue = false) => {
+  const finishPlayback = useCallback((deviceSpeech = false) => {
     if (!active.current || phaseRef.current !== "ready") { stopAudio(); return; }
     if (playbackCleanupTimer.current !== null) return;
-    // Keep the established Web Audio behavior for streamed speech. For device
-    // speech only, test an independent local WAV through HTMLAudioElement.
     const mine = sequence.current;
-    if (testMediaCue) {
-      // End WebKit's device-speech session first, then give iOS a full second
-      // to release its ducking before testing the independent media route.
-      window.speechSynthesis?.cancel();
-      window.setTimeout(() => {
-        if (mine !== sequence.current || !active.current) return;
-        const mediaCue = createMediaReadyCue();
-        if (mediaCue) {
-          mediaReadyCue.current = mediaCue;
-          const release = () => {
-            if (mediaReadyCue.current === mediaCue) mediaReadyCue.current = null;
-            mediaCue.dispose();
-          };
-          mediaCue.audio.onended = release;
-          mediaCue.audio.onerror = release;
-          void mediaCue.audio.play().catch(() => {
-            release();
-            if (mine === sequence.current && active.current) setNotice("Delayed local media ready-tone test was blocked by iOS.");
-          });
-        } else {
-          setNotice("Local media ready-tone test is unavailable.");
+    const playReadyCue = () => {
+      if (mine !== sequence.current || !active.current) return;
+      // The same player and unboosted WAV heard at tap/finish, not a new
+      // post-speech player. Keep it allocated for subsequent replies as well.
+      void cues.current?.ready().then((played) => {
+        if (!played && mine === sequence.current && active.current) {
+          setNotice("Ready tone unavailable or blocked by iOS.");
         }
-      }, 1000);
+      });
+    };
+    if (deviceSpeech) {
+      // Preserve the existing cancel/gap while testing player reuse. The gap
+      // is not proof of an audio-session reset or a known ducking duration.
+      window.speechSynthesis?.cancel();
+      window.setTimeout(playReadyCue, 1000);
     } else {
-      cues.current?.ready();
+      playReadyCue();
     }
     playbackCleanupTimer.current = setTimeout(() => {
       playbackCleanupTimer.current = null;
       if (mine === sequence.current) stopAudio();
-    }, testMediaCue ? 2500 : 1200);
+    }, deviceSpeech ? 2500 : 1200);
   }, [stopAudio]);
   const cancelCapture = useCallback(() => {
     captureGeneration.current += 1;

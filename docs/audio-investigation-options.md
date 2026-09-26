@@ -178,8 +178,22 @@ Unit tests cover capture sequencing, no recording/network/session writes, permis
 
 The user reported A and B were about the same. Run `3952a635-2d7b-4204-a733-e61a9dd31194` completed with speech start/end and both media playing/ended events, declared session type `auto`, and no failures. This sequential probe still did not reproduce a large drop. It does not reproduce the full production combination of MediaRecorder, Web Audio, fresh media player, cancellation, and cleanup timing.
 
-### Fresh-player comparison (awaiting device results)
+### Fresh-player comparison (reproduced a clear difference)
 
 Test 4 is the same short speech comparison as test 2, but creates a new `Audio` element for B. It uses **the identical Blob URL**, preserving the exact WAV bytes, unboosted gain, and sample format. A remains allocated (but ended) until test completion; its handlers are detached when B's player takes over. Both players are released before the shared URL is revoked. There is no microphone, session override, extra speech cancellation, or additional delay. A bounded `player-recreated` event identifies the changed path; no automatic reuse fallback conceals a rejected new-player play.
 
-This tests the fresh-versus-reused player difference between the successful isolated path and normal Voice Drive. It is not a proposed production fix or a claim to create a fresh native audio session. Normal Voice Drive audio is unchanged.
+Two fresh-player runs completed: `8e1468fa-f4bc-4395-a4d9-3f210fd95643` and `24bf22fc-584e-4e59-8d60-4c51b805aac9`. Both logged speech-ended → player-recreated → after-playing → after-ended → complete, with declared session type `auto` and no failures. The user reported B was definitely quieter, although audible. Earlier reused-player comparisons were about the same volume.
+
+This is the clearest discriminating result so far: changing player reuse, while holding WAV bytes, source gain, speech phrase, and microphone absence constant, reproduced a noticeable difference. It implicates post-speech player initialization/lifecycle; it does not establish the underlying native ducking/routing mechanism, nor prove the full production workflow is solved.
+
+The evidence-supported production candidate is one retained, already-played media cue player for the pre-speech and post-speech cues, using the same unboosted WAV—not merely allocating an unused player earlier. That candidate should not carry over the experimental 8× amplification. Applying it to the full workflow still requires testing capture, thinking audio, cancellation, navigation, and repeated replies. The production application below follows this evidence, without claiming acoustic success before device testing.
+
+### Production application (awaiting device confirmation)
+
+- `createVoiceCues()` now owns one retained local WAV player. Ready-at-open, recording-start, finish-dictating, and post-reply cues all replay it; no new post-speech cue element or source is created.
+- The default WAV now uses unboosted peak gain `0.14`, identical to the diagnostic WAV. The experimental 8× compensation and its clipped samples are removed.
+- Stop/normal reply cleanup pauses the cue without clearing its source or revoking its URL. Page disposal releases it. A blocked play retains the same element for a later tap rather than silently substituting a different playback path.
+- Microphone/MediaRecorder logic and session policy are unchanged. The quiet thinking pulse still uses Web Audio. Existing device-speech cancellation, one-second gap, and cleanup timing are deliberately unchanged: this is not an additional timing or session-reconfiguration experiment.
+- Regression tests cover player identity through recording → finish → both streamed and device replies, repeated device replies, cancellation during the delayed cue, late speech callbacks, and disposal. PCM tests verify production and diagnostic WAVs are byte-identical and unboosted. Typecheck, all 38 tests, and build pass in the working checkout.
+
+The isolated comparison supports player reuse, but capture plus thinking audio plus real reply playback remains an on-device validation step. The tested benefit assumes this page's cue player has actually played before speech; entering the page mid-reply without an earlier cue is not covered by that evidence. These mocked tests cannot establish perceived volume, clarity, or native audio routing.

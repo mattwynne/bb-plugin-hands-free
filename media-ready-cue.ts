@@ -1,14 +1,10 @@
-import { READY_CUE_GAIN } from "./voice-cues";
-
-// Local PCM WAV. Production uses experimental post-speech compensation; the
-// native cause of the quiet output remains unconfirmed. Diagnostics opt out.
-export const POST_SPEECH_MEDIA_GAIN = READY_CUE_GAIN * 8;
+// One unboosted local PCM WAV for tap, finish, post-reply, and diagnostics.
+export const READY_CUE_GAIN = 0.14;
 const NOTE_LENGTH = 0.28;
 const FADE_IN = 0.025;
 const MIN_GAIN = 0.0001;
 
-// Match voice-cues.ts: exponential attack to READY_CUE_GAIN followed by an
-// exponential decay to MIN_GAIN. Compensation scales this canonical shape.
+// Preserve the original cue's exponential attack and decay.
 export function readyCueEnvelope(localTime: number): number {
   if (localTime < 0 || localTime >= NOTE_LENGTH) return 0;
   if (localTime <= FADE_IN) {
@@ -22,8 +18,7 @@ export interface MediaReadyCue {
   dispose(): void;
 }
 
-// The default preserves production behavior; the isolated comparison passes 0.14.
-export function createMediaReadyCue(peakGain = POST_SPEECH_MEDIA_GAIN): MediaReadyCue | null {
+export function createMediaReadyCue(peakGain = READY_CUE_GAIN): MediaReadyCue | null {
   if (typeof Audio === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return null;
   const sampleRate = 16000;
   const duration = 0.54;

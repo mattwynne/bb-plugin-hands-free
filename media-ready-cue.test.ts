@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { createMediaReadyCue, POST_SPEECH_MEDIA_GAIN, readyCueEnvelope } from "./media-ready-cue";
-import { READY_CUE_GAIN } from "./voice-cues";
+import { createMediaReadyCue, READY_CUE_GAIN, readyCueEnvelope } from "./media-ready-cue";
 import { Blob as NodeBlob } from "node:buffer";
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
-it("allows an unboosted diagnostic WAV without changing the production default", async () => {
+it("uses identical unboosted WAV bytes for production and diagnostics without clipping", async () => {
   const blobs: Blob[] = [];
   vi.stubGlobal("Blob", NodeBlob);
   vi.stubGlobal("URL", {
@@ -24,7 +23,8 @@ it("allows an unboosted diagnostic WAV without changing the production default",
   }));
   expect(peaks[0]).toBeGreaterThan(0.13);
   expect(peaks[0]).toBeLessThanOrEqual(READY_CUE_GAIN);
-  expect(peaks[1]).toBe(1); // existing 8× production default remains unchanged
+  expect(peaks[1]).toBe(peaks[0]);
+  expect(await blobs[1]!.arrayBuffer()).toEqual(await blobs[0]!.arrayBuffer());
 });
 
 it("creates and disposes a local WAV media element without Web Audio", () => {
@@ -41,7 +41,6 @@ it("creates and disposes a local WAV media element without Web Audio", () => {
   vi.stubGlobal("Audio", FakeAudio);
 
   const cue = createMediaReadyCue();
-  expect(POST_SPEECH_MEDIA_GAIN).toBe(READY_CUE_GAIN * 8);
   expect(readyCueEnvelope(0)).toBeCloseTo(0.0001);
   expect(readyCueEnvelope(0.025)).toBeCloseTo(READY_CUE_GAIN);
   expect(readyCueEnvelope(0.279)).toBeGreaterThan(0.0001);

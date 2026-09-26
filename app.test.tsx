@@ -14,7 +14,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("sends recorded speech on finish and automatically reads the agent reply", async () => {
+it.each(["stream", "device"] as const)("reuses the cue player through recording, finish, and a %s reply without breaking capture", async (speechMode) => {
+  const createObjectURL = vi.fn(() => "blob:shared-cue");
+  vi.stubGlobal("URL", { createObjectURL, revokeObjectURL: vi.fn() });
   const stopTracks = vi.fn();
   Object.defineProperty(navigator, "mediaDevices", {
     configurable: true, value: { getUserMedia: async () => ({ getTracks: () => [{ stop: stopTracks }] }) },
@@ -34,20 +36,30 @@ it("sends recorded speech on finish and automatically reads the agent reply", as
     }
   }
   vi.stubGlobal("MediaRecorder", FakeRecorder);
-  const play = vi.fn(async () => {});
   const players: FakeAudio[] = [];
   class FakeAudio {
     onended: (() => void) | null = null;
     onerror: (() => void) | null = null;
     constructor(public src: string) { players.push(this); }
-    play = play;
+    play = vi.fn(async () => {});
     pause = vi.fn();
     removeAttribute = vi.fn();
     load = vi.fn();
   }
   vi.stubGlobal("Audio", FakeAudio);
+  let utterance: FakeUtterance | undefined;
+  class FakeUtterance {
+    lang = "";
+    onend: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor(_text: string) { utterance = this; }
+  }
+  const speakDevice = vi.fn();
+  vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
+  vi.stubGlobal("speechSynthesis", { speak: speakDevice, cancel: vi.fn(), speaking: false });
   const fetchMock = vi.fn(async (input: string) => input.includes("voice-transcription")
     ? { ok: true, json: async () => ({ text: "Fix the test" }) }
+    : speechMode === "device" ? { ok: false, status: 404 }
     : { ok: true, json: async () => ({ id: "audio-1" }) });
   vi.stubGlobal("fetch", fetchMock);
 
@@ -69,22 +81,35 @@ it("sends recorded speech on finish and automatically reads the agent reply", as
 
   expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
   await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
-  await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(speechMode === "stream" ? players[1]?.play : speakDevice).toHaveBeenCalledOnce());
+  const cuePlayer = players[0]!;
+  const player = players[1];
+  expect(players).toHaveLength(speechMode === "stream" ? 2 : 1);
+  expect(cuePlayer.src).toBe("blob:shared-cue");
+  expect(cuePlayer.play).toHaveBeenCalledTimes(3); // page ready, capture started, finish
+  expect(stopTracks).toHaveBeenCalledOnce();
   expect(slot.getByRole("button", { name: "■ Stop audio" })).toBeTruthy();
   expect(slot.queryByText("The test is fixed.")).toBeNull();
   await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_2", state: "ready", hasReply: true });
-  expect(play).toHaveBeenCalledTimes(1);
-  const player = players.at(-1)!;
+  expect(speechMode === "stream" ? player!.play : speakDevice).toHaveBeenCalledOnce();
   vi.useFakeTimers();
-  await act(async () => { player.onended?.(); });
-  expect(player.pause).not.toHaveBeenCalled(); // don't tear audio down before the ready cue
-  await act(async () => { await vi.advanceTimersByTimeAsync(1199); });
-  expect(player.pause).not.toHaveBeenCalled();
+  await act(async () => {
+    if (speechMode === "stream") player!.onended?.();
+    else { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(1000); }
+  });
+  expect(cuePlayer.play).toHaveBeenCalledTimes(4); // post-reply: same player/source
+  expect(createObjectURL).toHaveBeenCalledOnce();
+  const pauses = cuePlayer.pause.mock.calls.length;
+  if (player) expect(player.pause).not.toHaveBeenCalled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(speechMode === "stream" ? 1199 : 1499); });
+  expect(cuePlayer.pause).toHaveBeenCalledTimes(pauses);
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-  expect(player.pause).toHaveBeenCalledOnce();
+  expect(cuePlayer.pause).toHaveBeenCalledTimes(pauses + 1);
+  expect(cuePlayer.removeAttribute).not.toHaveBeenCalled();
+  if (player) expect(player.pause).toHaveBeenCalledOnce();
 });
 
-it("uses only a local media element for the ready cue after device speech", async () => {
+it("retains the same local cue player across device replies, Stop, and late speech callbacks", async () => {
   const createObjectURL = vi.fn(() => "blob:local-ready-cue");
   const revokeObjectURL = vi.fn();
   vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
@@ -119,7 +144,8 @@ it("uses only a local media element for the ready cue after device speech", asyn
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
     rpc: {
       state: async () => ({ state: "ready" }),
-      latest: async () => ({ text: "Device speech reply" }),
+      latest: vi.fn().mockResolvedValueOnce({ text: "Device speech reply" })
+        .mockResolvedValueOnce({ text: "Next reply" }).mockResolvedValue({ text: "Final reply" }),
       send: async () => ({ accepted: true }),
     },
   });
@@ -127,17 +153,41 @@ it("uses only a local media element for the ready cue after device speech", asyn
   await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await waitFor(() => expect(utterance).not.toBeNull());
   const priorCancelCalls = cancelSpeech.mock.calls.length;
+  const cuePlayer = players[0]!;
+  expect(play).toHaveBeenCalledOnce(); // ready before speech actually played this element
   vi.useFakeTimers();
   await act(async () => { utterance!.onend?.(); });
   expect(cancelSpeech).toHaveBeenCalledTimes(priorCancelCalls + 1);
-  expect(play).not.toHaveBeenCalled();
   await act(async () => { await vi.advanceTimersByTimeAsync(999); });
-  expect(play).not.toHaveBeenCalled();
+  expect(play).toHaveBeenCalledOnce(); // existing post-speech delay stays unchanged
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-  expect(play).toHaveBeenCalledOnce();
+  expect(play).toHaveBeenCalledTimes(2);
   expect(players).toHaveLength(1);
-  expect(players[0]?.src).toBe("blob:local-ready-cue");
+  expect(cuePlayer.src).toBe("blob:local-ready-cue");
   expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: "audio/wav" }));
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+  expect(revokeObjectURL).not.toHaveBeenCalled();
+
+  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await act(async () => { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(1000); });
+  expect(play).toHaveBeenCalledTimes(3);
+  fireEvent.click(slot.getByRole("button", { name: "■ Stop audio" }));
+  await act(async () => { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(3000); });
+  expect(play).toHaveBeenCalledTimes(3); // a late speech callback cannot revive stopped playback
+
+  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await act(async () => { utterance!.onend?.(); });
+  fireEvent.click(slot.getByRole("button", { name: "■ Stop audio" }));
+  await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+  expect(play).toHaveBeenCalledTimes(3); // Stop also cancels the pending delayed cue
+  expect(cuePlayer.removeAttribute).not.toHaveBeenCalled();
+  expect(cuePlayer.load).not.toHaveBeenCalled();
+  expect(players).toHaveLength(1);
+  expect(createObjectURL).toHaveBeenCalledOnce();
+  slot.lifecycle.unmount();
+  slot = undefined;
+  expect(cuePlayer.removeAttribute).toHaveBeenCalledWith("src");
+  expect(revokeObjectURL).toHaveBeenCalledOnce();
 });
 
 it("locks the microphone during agent work and unlocks it after a silent idle or failure", async () => {
