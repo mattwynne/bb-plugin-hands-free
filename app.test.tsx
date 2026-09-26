@@ -22,6 +22,25 @@ it("registers Hands-Free on the existing sidebar route", () => {
   expect(header.getByRole("button", { name: "Open Hands-Free for this thread" })).toBeTruthy();
   header.lifecycle.unmount();
 });
+
+it("keeps page guidance concise and relevant to the selected thread", async () => {
+  const page = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
+  });
+  expect(page.getByRole("status").textContent).toBe("Choose a thread to begin.");
+  expect(page.queryByText("Keep BB open and unlocked while recording or listening.")).toBeNull();
+  expect(page.queryByText(/tone confirms recording/i)).toBeNull();
+  page.lifecycle.unmount();
+
+  const selectedPage = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
+    sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
+    rpc: { state: async () => ({ state: "ready" }) },
+  });
+  await waitFor(() => expect(selectedPage.getByRole("status").textContent).toBe("Ready. Tap to talk."));
+  expect(selectedPage.getByText("Keep BB open and unlocked while recording or listening.")).toBeTruthy();
+  expect(selectedPage.queryByText(/Read Aloud is optional/i)).toBeNull();
+  selectedPage.lifecycle.unmount();
+});
 let slot: ReturnType<typeof renderSlot> | undefined;
 afterEach(() => {
   slot?.lifecycle.unmount();
