@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { definePluginApp, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
-import { mountThreadMenuLink } from "./menu-link";
 
 // Web Speech is not part of every iOS WebView. Keep the keyboard-dictation
 // path usable when SpeechRecognition is absent or permission is denied.
@@ -314,10 +313,6 @@ function OpenVoiceDrive({ threadId }: { threadId: string }) {
 }
 
 export default definePluginApp((app) => {
-  app.contentScripts.register({
-    id: "thread-actions-entry",
-    mount: ({ signal }) => mountThreadMenuLink(signal),
-  });
   app.slots.navPanel({ id: "drive", title: "Voice Drive", icon: "Mic", path: "drive", component: VoicePage });
   app.slots.experimental_threadHeaderAction({ id: "open-drive", title: "Voice Drive", component: OpenVoiceDrive });
 });
