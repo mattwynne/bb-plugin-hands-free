@@ -482,6 +482,19 @@ function VoicePage({ subPath }: { subPath: string }) {
             }
           });
         }} className="min-h-12 w-full rounded-xl border px-3 text-sm disabled:opacity-40">Test ready tone (diagnostic)</button>
+        <button type="button" disabled={!selected || phase !== "ready" || speaking || listening} onClick={() => {
+          const cue = cues.current;
+          if (!cue) return;
+          cue.reset();
+          report.current("manual-test", "manual");
+          report.current("cue-request", "manual");
+          void cue.ready().then((result) => {
+            if (active.current) {
+              report.current(result.scheduled ? "cue-scheduled" : "cue-unavailable", "manual", result.audioState);
+              setCueDiagnostic(`Manual after reset: ${result.scheduled ? "scheduled" : "not scheduled"}; Web Audio ${result.audioState}`);
+            }
+          });
+        }} className="min-h-12 w-full rounded-xl border px-3 text-sm disabled:opacity-40">Reset audio & test tone (diagnostic)</button>
         {cueDiagnostic && <p role="status" className="text-xs text-muted-foreground">{cueDiagnostic}</p>}
         {notice && <p role="status" aria-live="polite" className="rounded-xl border p-3 text-sm">{notice}</p>}
         <p className="text-xs text-muted-foreground">Keep BB open and unlocked. iOS may pause audio or the microphone when the app is backgrounded. Read Aloud is optional; device speech is used if its service is unavailable. This is not CarPlay.</p>

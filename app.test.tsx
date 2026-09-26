@@ -88,6 +88,8 @@ it("sends recorded speech on finish and automatically reads the agent reply", as
   expect(player.pause).toHaveBeenCalledOnce();
   fireEvent.click(slot.getByRole("button", { name: "Test ready tone (diagnostic)" }));
   expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ event: "manual-test", detail: "manual" }));
+  fireEvent.click(slot.getByRole("button", { name: "Reset audio & test tone (diagnostic)" }));
+  expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ event: "audio-reset", audioState: "unavailable" }));
 });
 
 it("locks the microphone during agent work and unlocks it after a silent idle or failure", async () => {
