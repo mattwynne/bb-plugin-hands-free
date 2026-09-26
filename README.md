@@ -24,21 +24,6 @@ Open **Voice Drive** in the BB sidebar, select a thread, or use the **Voice** bu
 - **Speech is sent as soon as dictation ends**; there is no chance to correct transcription before the agent sees it. Do not dictate passwords, destructive instructions or anything you must inspect first. This does **not** approve tool calls or permission prompts, read every stream update, or make coding tasks safe to supervise while driving. Pull over to inspect changes and approve actions. Sending uses only a fresh turn on an idle thread; a busy thread returns an error rather than steering/queuing silently. It uses the thread's server-side defaults, not temporary model/permission choices or attachments from BB's normal composer.
 - When a selected thread becomes idle, Voice Drive reads its last assistant output, not every streaming update or a full transcript. Identical consecutive outputs are de-duplicated. Answers over 12,000 characters are not silently truncated: open the normal thread to review them. The voice page only lists threads present in BB's current sidebar roster.
 
-## Isolated audio comparison
-
-Open **Audio test** in BB's sidebar. For a clean comparison, open that page, fully quit/reopen BB, keep phone volume fixed, and do not start dictation first.
-
-1. **Tone-only control**: tone A, one-second silence, then automatic tone B.
-2. **Speech comparison**: tone A, device speech saying only “Test,” then automatic tone B on the speech-end event.
-3. **Microphone comparison** (explicit opt-in): open the mic, play tone A while its tracks are live, stop all tracks, wait the same one-second gap as the control, then play tone B. No speech and no `MediaRecorder`: microphone audio is never saved, uploaded, transcribed, or connected to an output. This isolates capture start/stop rather than the full recording workflow. Stopping tracks does not prove the native audio session has finished transitioning.
-4. **Fresh-player speech comparison**: identical to test 2 except B uses a new `Audio` element pointed at A's exact Blob URL. A's resources stay allocated until completion to avoid adding an early-teardown variable. No microphone, gain change, or session override.
-
-Report here in chat whether B is quieter than A **in each test**, and whether A itself was clearly audible. Both tones use the exact same local WAV at unboosted gain `0.14`. Tests 1–3 reuse one media element; test 4 changes only player reuse. Tests 1, 2, and 4 never open the microphone. None creates an AudioContext, changes audio-session settings, reads thread content, or calls a TTS/transcription service. There is no fallback that could hide which path ran. Errors and a 20-second timeout (including permission waits) are shown as failed tests, not quiet playback. Stop, navigation, and backgrounding release the capture test's tracks; a late permission grant after cancellation is immediately released without playing anything. Leaving the page stops its playback and cancels only its own active speech.
-
-Run-correlated metadata is available via `bb plugin logs voice-drive -n 120`: fixed test/event/session-type enums and elapsed times, no conversation text, recordings, device labels, or freeform errors. Comparison logs are limited to 32 events per run. Normal device speech also emits `speech-playback` records (at most 16 per utterance): a random playback ID, fixed event/error-code enums, and elapsed time. These distinguish end, silence-fallback completion, genuine errors, and ignored late callbacks; cleanup cancellation must not turn a completed reply into a failure. Both diagnostic RPCs share a 120-event/minute server limit. Session type is observed, not changed, and is not evidence of the native speaker route or output volume. Tests with fake APIs verify sequencing and isolation, not acoustic volume.
-
-See [the sourced investigation](docs/audio-investigation-options.md) for previous findings and remaining options. Normal Voice Drive cue behavior is unchanged by the separate comparison page.
-
 ## Development
 
 ```sh
@@ -48,4 +33,6 @@ npm test
 npm run build
 ```
 
-`server.ts` exposes five schema-validated RPC calls (latest output, thread state, send, bounded audio-test diagnostics, and bounded speech-lifecycle diagnostics), and publishes active/idle/failure/interaction notifications without broadcasting message text. `app.tsx` owns speech state in the page and releases the microphone and audio on thread change/unmount. There is no server-side transcript storage. The Read Aloud HTTP integration uses its `/prepare` and `/stream` routes; if those private routes change, device speech is the fallback.
+`server.ts` exposes three schema-validated RPC calls (latest output, thread state, and send), and publishes active/idle/failure/interaction notifications without broadcasting message text. `app.tsx` owns speech state in the page and releases the microphone and audio on thread change/unmount. There is no server-side transcript storage. The Read Aloud HTTP integration uses its `/prepare` and `/stream` routes; if those private routes change, device speech is the fallback.
+
+The temporary Audio test panel and diagnostic RPCs have been removed. Automated regression tests remain; the [archived audio investigation](docs/audio-investigation-options.md) preserves the findings and rationale.

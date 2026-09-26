@@ -1,5 +1,7 @@
 # iPhone cue-volume investigation: evidence and options
 
+> Historical investigation, now closed. The user accepted the final cues and requested cleanup. The temporary Audio test panel, comparison runner, diagnostic RPCs, and speech trace logging have been removed. The sections below record experiments chronologically, not current operating instructions. Production audio behavior and its regression tests are retained.
+
 ## Answer in brief
 
 - **There are untested session-recovery options.** The earlier claim that a native fix is required was premature.

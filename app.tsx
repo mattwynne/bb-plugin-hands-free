@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { definePluginApp, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import { createVoiceCues, type VoiceCues } from "./voice-cues";
-import { AudioTestPage } from "./audio-test-page";
-import { speechErrorCode, type SpeechErrorCode, type SpeechPlaybackEvent } from "./speech-playback-events";
 
 // Web Speech is not part of every iOS WebView. Keep the keyboard-dictation
 // path usable when SpeechRecognition is absent or permission is denied.
@@ -101,8 +99,7 @@ function VoicePage({ subPath }: { subPath: string }) {
       });
     };
     if (deviceSpeech) {
-      // Preserve the existing cancel/gap while testing player reuse. The gap
-      // is not proof of an audio-session reset or a known ducking duration.
+      // Keep the established device-speech cleanup and gap before the reply cue.
       window.speechSynthesis?.cancel();
       window.setTimeout(playReadyCue, 1000);
     } else {
@@ -171,40 +168,21 @@ function VoicePage({ subPath }: { subPath: string }) {
       }
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = navigator.language || "en-US";
-      const session = globalThis.crypto?.randomUUID?.() ?? `speech-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-      const started = performance.now();
-      let diagnosticCount = 0;
-      const report = (event: SpeechPlaybackEvent, errorCode: SpeechErrorCode = "none") => {
-        if (diagnosticCount++ >= 16) return;
-        const elapsedMs = Math.min(3600000, Math.max(0, Math.round(performance.now() - started)));
-        // Never await diagnostic I/O or include speech text/native error objects.
-        void rpc.call("speechDiagnostic", { session, event, errorCode, elapsedMs }).catch(() => {});
-      };
       let completed = false;
       const stopMonitoring = () => {
         if (speechMonitor.current !== null) clearInterval(speechMonitor.current);
         speechMonitor.current = null;
       };
-      const completeSpeech = (reason: "end" | "silence-complete" | "error", errorCode: SpeechErrorCode = "none") => {
+      const completeSpeech = (failed = false) => {
         if (completed || mine !== sequence.current) return;
         completed = true; // latch BEFORE finishPlayback can call speechSynthesis.cancel()
         stopMonitoring();
-        utterance.onstart = utterance.onend = utterance.onerror = null;
-        report(reason, errorCode);
+        utterance.onend = utterance.onerror = null;
         finishPlayback(true);
-        if (reason === "error") setNotice("Speech playback failed. Read the reply on screen.");
+        if (failed) setNotice("Speech playback failed. Read the reply on screen.");
       };
-      utterance.onstart = () => { if (!completed && mine === sequence.current) report("start"); };
-      utterance.onend = () => {
-        if (completed || mine !== sequence.current) { report("ignored-end"); return; }
-        completeSpeech("end");
-      };
-      utterance.onerror = (event) => {
-        const code = speechErrorCode(event?.error);
-        if (completed || mine !== sequence.current) { report("ignored-error", code); return; }
-        completeSpeech("error", code);
-      };
-      report("request");
+      utterance.onend = () => completeSpeech();
+      utterance.onerror = () => completeSpeech(true);
       window.speechSynthesis.speak(utterance);
       // A synchronous terminal callback must not install a new monitor or
       // overwrite a genuine failure notice when speak() returns.
@@ -216,11 +194,11 @@ function VoicePage({ subPath }: { subPath: string }) {
       speechMonitor.current = setInterval(() => {
         if (mine !== sequence.current) { stopMonitoring(); return; }
         if (window.speechSynthesis.speaking) { heardSpeech = true; silentChecks = 0; }
-        else if (heardSpeech && ++silentChecks >= 4) completeSpeech("silence-complete");
+        else if (heardSpeech && ++silentChecks >= 4) completeSpeech();
       }, 300);
       setNotice("Reading with device voice.");
     }
-  }, [stopAudio, finishPlayback, rpc]);
+  }, [stopAudio, finishPlayback]);
 
   useEffect(() => {
     cancelCapture();
@@ -497,6 +475,5 @@ function OpenVoiceDrive({ threadId }: { threadId: string }) {
 
 export default definePluginApp((app) => {
   app.slots.navPanel({ id: "drive", title: "Voice Drive", icon: "Mic", path: "drive", component: VoicePage });
-  app.slots.navPanel({ id: "audio-test", title: "Audio test", icon: "Volume2", path: "audio-test", component: AudioTestPage });
   app.slots.experimental_threadHeaderAction({ id: "open-drive", title: "Voice Drive", component: OpenVoiceDrive });
 });

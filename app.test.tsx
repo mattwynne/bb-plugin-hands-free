@@ -3,9 +3,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { act, fireEvent, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
-import type { rpcContract } from "./server";
 
 const app = await loadPluginApp(() => import("./app"));
+it("registers only the production Voice Drive sidebar panel", () => {
+  expect(app.navPanels.map((panel) => panel.id)).toEqual(["drive"]);
+});
 let slot: ReturnType<typeof renderSlot> | undefined;
 afterEach(() => {
   slot?.lifecycle.unmount();
@@ -233,13 +235,11 @@ it.each(["end-sync", "end-queued", "silence-sync", "silence-queued", "active-err
     vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
     vi.stubGlobal("speechSynthesis", synth);
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 404 })));
-    const diagnostic = vi.fn(async (_args: unknown) => ({ recorded: true }));
     slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
       sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
       rpc: {
         state: async () => ({ state: "ready" }),
         latest: async () => ({ text: "Private reply" }),
-        speechDiagnostic: diagnostic,
       },
     });
     await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
@@ -275,14 +275,7 @@ it.each(["end-sync", "end-queued", "silence-sync", "silence-queued", "active-err
     });
     expect(play).toHaveBeenCalledTimes(mode === "stopped" ? 0 : 1);
     if (!mode.endsWith("error")) expect(slot.queryByText("Speech playback failed. Read the reply on screen.")).toBeNull();
-    expect(diagnostic).toHaveBeenCalled();
-    expect(diagnostic.mock.calls.length).toBeLessThanOrEqual(16);
-    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain("Private");
-    if (mode.endsWith("error")) {
-      expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({
-        event: "error", errorCode: mode === "unknown-error" ? "unknown" : mode === "active-interrupted-error" ? "interrupted" : "synthesis-failed",
-      }));
-    }
+    expect(slot.inspection.rpcCalls).toHaveLength(2); // initial state + latest reply only, no diagnostics
     expect(vi.getTimerCount()).toBe(0);
   },
 );

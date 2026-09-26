@@ -1,7 +1,5 @@
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { AUDIO_COMPARISON_EVENTS, AUDIO_SESSION_TYPES } from "./audio-comparison-events";
-import { SPEECH_PLAYBACK_EVENTS, SPEECH_ERROR_CODES } from "./speech-playback-events";
 
 const threadId = z.string().min(1).max(200);
 export const rpcContract = defineRpcContract({
@@ -17,46 +15,10 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadId }),
     output: z.object({ state: z.enum(["ready", "thinking", "attention"]) }),
   },
-  speechDiagnostic: {
-    input: z.object({
-      session: z.string().regex(/^[a-zA-Z0-9-]{8,40}$/),
-      event: z.enum(SPEECH_PLAYBACK_EVENTS),
-      errorCode: z.enum(SPEECH_ERROR_CODES),
-      elapsedMs: z.number().int().min(0).max(3600000),
-    }).strict(),
-    output: z.object({ recorded: z.boolean() }),
-  },
-  audioTestDiagnostic: {
-    input: z.object({
-      session: z.string().regex(/^[a-zA-Z0-9-]{8,40}$/),
-      variant: z.enum(["control", "speech", "speech-fresh", "capture"]),
-      event: z.enum(AUDIO_COMPARISON_EVENTS),
-      elapsedMs: z.number().int().min(0).max(60000),
-      sessionType: z.enum(AUDIO_SESSION_TYPES),
-    }).strict(),
-    output: z.object({ recorded: z.boolean() }),
-  },
 });
 
 export default function plugin(bb: BbPluginApi) {
-  let diagnosticWindow = Date.now();
-  let diagnosticCount = 0;
-  const allowDiagnostic = () => {
-    const now = Date.now();
-    if (now - diagnosticWindow >= 60000) { diagnosticWindow = now; diagnosticCount = 0; }
-    return diagnosticCount++ < 120;
-  };
   bb.rpc.register(rpcContract, {
-    speechDiagnostic: async ({ session, event, errorCode, elapsedMs }) => {
-      if (!allowDiagnostic()) return { recorded: false };
-      bb.log.info(`speech-playback session=${session} event=${event} errorCode=${errorCode} elapsedMs=${elapsedMs}`);
-      return { recorded: true };
-    },
-    audioTestDiagnostic: async ({ session, variant, event, elapsedMs, sessionType }) => {
-      if (!allowDiagnostic()) return { recorded: false };
-      bb.log.info(`audio-test session=${session} variant=${variant} event=${event} elapsedMs=${elapsedMs} sessionType=${sessionType}`);
-      return { recorded: true };
-    },
     latest: async ({ threadId }) => {
       const result = await bb.sdk.threads.output({ threadId });
       return { text: result.output };

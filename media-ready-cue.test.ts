@@ -5,7 +5,7 @@ import { Blob as NodeBlob } from "node:buffer";
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
-it("uses identical unboosted WAV bytes for production and diagnostics without clipping", async () => {
+it("keeps the default normal cue byte-identical to the explicit unboosted gain without clipping", async () => {
   const blobs: Blob[] = [];
   vi.stubGlobal("Blob", NodeBlob);
   vi.stubGlobal("URL", {

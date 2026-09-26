@@ -3,49 +3,15 @@ import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/tes
 import plugin from "./server";
 
 describe("voice-drive", () => {
-  it("logs only schema-validated bounded comparison metadata", async () => {
+  it("does not register the retired diagnostic RPCs", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "voice-drive" });
     plugin(bb);
-    const event = { session: "test-session-123", variant: "speech", event: "speech-ended", elapsedMs: 321, sessionType: "auto" };
-    expect(await harness.behavior.callRpc("audioTestDiagnostic", event)).toEqual({ recorded: true });
-    expect(JSON.stringify(harness.logEntries)).toContain("audio-test session=test-session-123 variant=speech event=speech-ended elapsedMs=321 sessionType=auto");
-    await expect(harness.behavior.callRpc("audioTestDiagnostic", { ...event, text: "private reply" })).rejects.toThrow();
-    await expect(harness.behavior.callRpc("audioTestDiagnostic", { ...event, event: "private reply" })).rejects.toThrow();
-    for (let i = 1; i < 120; i++) await harness.behavior.callRpc("audioTestDiagnostic", event);
-    expect(await harness.behavior.callRpc("audioTestDiagnostic", event)).toEqual({ recorded: false });
-    expect(JSON.stringify(harness.logEntries)).not.toContain("private reply");
-    await harness.lifecycle.dispose();
-  });
-
-  it("logs only bounded production speech events and shares the diagnostic rate limit", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "voice-drive" });
-    plugin(bb);
-    const entry = { session: "speech-run-123", event: "ignored-error", errorCode: "interrupted", elapsedMs: 1000 };
-    expect(await harness.behavior.callRpc("speechDiagnostic", entry)).toEqual({ recorded: true });
-    expect(JSON.stringify(harness.logEntries)).toContain("speech-playback session=speech-run-123 event=ignored-error errorCode=interrupted elapsedMs=1000");
-    for (const extra of [
-      { text: "private reply" }, { errorCode: "private error" }, { event: "private event" },
-      { elapsedMs: 3600001 }, { utterance: { text: "private reply" } },
-    ]) {
-      await expect(harness.behavior.callRpc("speechDiagnostic", { ...entry, ...extra })).rejects.toThrow();
-    }
-    for (let i = 1; i < 120; i++) await harness.behavior.callRpc("speechDiagnostic", entry);
-    expect(await harness.behavior.callRpc("speechDiagnostic", entry)).toEqual({ recorded: false });
-    expect(await harness.behavior.callRpc("audioTestDiagnostic", {
+    await expect(harness.behavior.callRpc("audioTestDiagnostic", {
       session: "test-run-123", variant: "speech", event: "start", elapsedMs: 0, sessionType: "auto",
-    })).toEqual({ recorded: false });
-    expect(JSON.stringify(harness.logEntries)).not.toContain("private");
-    await harness.lifecycle.dispose();
-  });
-
-  it("accepts only bounded microphone-comparison metadata", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "voice-drive" });
-    plugin(bb);
-    const entry = { session: "capture-run-123", variant: "capture", event: "mic-stopped", elapsedMs: 600, sessionType: "auto" };
-    expect(await harness.behavior.callRpc("audioTestDiagnostic", entry)).toEqual({ recorded: true });
-    expect(JSON.stringify(harness.logEntries)).toContain("variant=capture event=mic-stopped");
-    expect(await harness.behavior.callRpc("audioTestDiagnostic", { ...entry, variant: "speech-fresh", event: "player-recreated" })).toEqual({ recorded: true });
-    await expect(harness.behavior.callRpc("audioTestDiagnostic", { ...entry, recording: "private audio" })).rejects.toThrow();
+    })).rejects.toThrow();
+    await expect(harness.behavior.callRpc("speechDiagnostic", {
+      session: "speech-run-123", event: "end", errorCode: "none", elapsedMs: 1000,
+    })).rejects.toThrow();
     await harness.lifecycle.dispose();
   });
 
