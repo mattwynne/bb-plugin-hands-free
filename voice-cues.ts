@@ -59,7 +59,9 @@ export function createVoiceCues(): VoiceCues {
   };
   return {
     unlock() { void activate(); },
-    ready() { cue([[523, 0], [659, 0.23]], 0.055, false, 0.28); },
+    // About 8 dB above the old 0.055 gain; audible on an iPhone speaker
+    // without making the periodic thinking pulse equally loud.
+    ready() { cue([[523, 0], [659, 0.23]], 0.14, false, 0.28); },
     finished() { cue([[659, 0], [440, 0.16]], 0.045); },
     startThinking() {
       if (disposed || thinking) return;
