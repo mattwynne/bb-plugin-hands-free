@@ -19,7 +19,7 @@ it("creates and disposes a local WAV media element without Web Audio", () => {
   vi.stubGlobal("Audio", FakeAudio);
 
   const cue = createMediaReadyCue();
-  expect(POST_SPEECH_MEDIA_GAIN).toBe(READY_CUE_GAIN * 3);
+  expect(POST_SPEECH_MEDIA_GAIN).toBe(READY_CUE_GAIN * 6);
   expect(readyCueEnvelope(0)).toBeCloseTo(0.0001);
   expect(readyCueEnvelope(0.025)).toBeCloseTo(READY_CUE_GAIN);
   expect(readyCueEnvelope(0.279)).toBeGreaterThan(0.0001);
