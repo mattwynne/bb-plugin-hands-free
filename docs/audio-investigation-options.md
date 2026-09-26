@@ -209,3 +209,14 @@ Regression tests reproduced the false warning with both explicit end and silence
 A separate `speechDiagnostic` RPC records only a random playback ID, fixed event/error-code enums, and bounded elapsed time. The client caps this at 16 records per utterance; both diagnostic RPCs share the existing 120-record/minute server limit. Unknown error codes become `unknown`; no utterance objects, conversation text, transcripts, recordings, or freeform error details are sent. Logs use the `speech-playback` prefix and distinguish normal end, silence-fallback completion, active errors, and ignored late events. These can test the hypothesis if a warning recurs.
 
 This patch does not change source gain, player reuse, microphone behavior, session policy, thinking audio, the one-second cue gap, or cleanup timing. It fixes lifecycle handling and adds observation, not another speculative volume adjustment. Typecheck, all 48 tests, and build pass in the working checkout; the next device run must validate the warning behavior.
+
+### Accepted behavior and final user-requested adjustment
+
+The user subsequently judged the behavior good enough and requested two finishing changes: make the initial tap tone a little quieter to match the others, and remove the unexplained sound when opening a thread. The latest production speech run (`23368357-f102-4007-99a1-31abebddaa13`) logged request → start → end, with no failure event. This is a successful observed run, not proof of a native audio-session mechanism.
+
+- The opening sound came from calling `ready()` after the initial thread-status query. That query now updates the ready text/button silently, including when selecting another idle thread. Actual recording/reply/idle-transition cues remain.
+- Recording-start uses 75% of the normal PCM amplitude: source gain `0.105` instead of `0.14` (about −2.5 dB at the source, not a measured perceived-loudness ratio). Finish and post-reply levels are unchanged. Both MediaRecorder and browser-recognition start paths use the quieter cue.
+- PCM scaling avoids relying on iOS media-element volume control. One player retains at most two cached WAV URLs. Finish selects the normal source before speech; post-reply selects the already-active normal source without reloading it. Both URLs are released on disposal. Diagnostic comparisons retain their identical, unboosted WAVs.
+- Regression tests verify silent opening, the recording-to-reply flow, sample-by-sample tap attenuation, preserved full-level finish/reply source, no redundant post-speech source reload, and exact-once cleanup. Microphone logic and audio-session policy are unchanged.
+
+Further volume experiments are closed at the user's request. This is a practical accepted outcome with a modest final level adjustment, not a claim that the underlying iOS behavior has been fully explained.

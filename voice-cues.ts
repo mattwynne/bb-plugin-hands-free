@@ -6,6 +6,7 @@ import { createMediaReadyCue, type MediaReadyCue } from "./media-ready-cue";
 export interface VoiceCues {
   unlock(): void;
   ready(): Promise<boolean>;
+  started(): void;
   finished(): void;
   stopCue(): void;
   startThinking(): void;
@@ -21,11 +22,12 @@ export function createVoiceCues(): VoiceCues {
   let disposed = false;
   let thinking = false;
 
-  const playReady = async (): Promise<boolean> => {
+  const playReady = async (level: "normal" | "tap" = "normal"): Promise<boolean> => {
     if (disposed) return false;
     try {
       readyCue ??= createMediaReadyCue();
       if (!readyCue) return false;
+      readyCue.selectLevel(level);
       readyCue.audio.currentTime = 0;
       // Reuse the player actually heard before speech, not just an earlier
       // allocation. A blocked attempt retains it for the next user tap.
@@ -77,7 +79,8 @@ export function createVoiceCues(): VoiceCues {
   };
   return {
     unlock() { void activate(); },
-    ready: playReady,
+    ready: () => playReady(),
+    started() { void playReady("tap"); },
     finished() { void playReady(); },
     stopCue() { readyCue?.audio.pause(); }, // retain source/player for the next cue
     startThinking() {

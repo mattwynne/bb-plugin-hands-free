@@ -1,5 +1,6 @@
-// One unboosted local PCM WAV for tap, finish, post-reply, and diagnostics.
+// Same local tone throughout; only the tap variant is attenuated.
 export const READY_CUE_GAIN = 0.14;
+const TAP_CUE_SCALE = 0.75;
 const NOTE_LENGTH = 0.28;
 const FADE_IN = 0.025;
 const MIN_GAIN = 0.0001;
@@ -15,11 +16,11 @@ export function readyCueEnvelope(localTime: number): number {
 
 export interface MediaReadyCue {
   audio: HTMLAudioElement;
+  selectLevel(level: "normal" | "tap"): void;
   dispose(): void;
 }
 
-export function createMediaReadyCue(peakGain = READY_CUE_GAIN): MediaReadyCue | null {
-  if (typeof Audio === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return null;
+function createCueUrl(peakGain: number): string {
   const sampleRate = 16000;
   const duration = 0.54;
   const frameCount = Math.ceil(sampleRate * duration);
@@ -54,11 +55,28 @@ export function createMediaReadyCue(peakGain = READY_CUE_GAIN): MediaReadyCue | 
     view.setInt16(44 + frame * 2, Math.round(Math.max(-1, Math.min(1, sample)) * 0x7fff), true);
   }
 
-  const url = URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+  return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+}
+
+export function createMediaReadyCue(peakGain = READY_CUE_GAIN): MediaReadyCue | null {
+  if (typeof Audio === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return null;
+  const url = createCueUrl(peakGain);
   const audio = new Audio(url);
+  let tapUrl: string | null = null;
+  let level: "normal" | "tap" = "normal";
   let disposed = false;
   return {
     audio,
+    selectLevel(next) {
+      if (disposed || next === level) return;
+      // Scale PCM rather than relying on element.volume support on iOS.
+      // Only two cached sources; never create another media element.
+      if (next === "tap") tapUrl ??= createCueUrl(peakGain * TAP_CUE_SCALE);
+      audio.src = next === "tap" ? tapUrl! : url;
+      level = next;
+      // Finish restores the normal source before speech; post-reply selection
+      // is then a no-op, preserving that already-played player AND source.
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -66,6 +84,7 @@ export function createMediaReadyCue(peakGain = READY_CUE_GAIN): MediaReadyCue | 
       audio.removeAttribute("src");
       audio.load();
       URL.revokeObjectURL(url);
+      if (tapUrl) URL.revokeObjectURL(tapUrl);
     },
   };
 }

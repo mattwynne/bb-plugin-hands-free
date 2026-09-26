@@ -5,7 +5,8 @@ import { createVoiceCues } from "./voice-cues";
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 function fakeMedia() {
-  const createObjectURL = vi.fn(() => "blob:shared-cue");
+  let urls = 0;
+  const createObjectURL = vi.fn(() => `blob:cue-${++urls}`);
   const revokeObjectURL = vi.fn();
   vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
   const players: FakeAudio[] = [];
@@ -21,15 +22,18 @@ function fakeMedia() {
   return { players, createObjectURL, revokeObjectURL };
 }
 
-it("reuses one media player and WAV for tap, finish, and post-reply cues, including after Stop", async () => {
+it("reuses one player with a quieter tap and a shared finish/post-reply source, including after Stop", async () => {
   const { players, createObjectURL, revokeObjectURL } = fakeMedia();
   const audioContext = vi.fn();
   vi.stubGlobal("AudioContext", audioContext);
   const cues = createVoiceCues();
-  expect(await cues.ready()).toBe(true);
+  cues.started();
+  await Promise.resolve();
   const player = players[0]!;
+  expect(player.src).toBe("blob:cue-2"); // quieter tap
   player.currentTime = 0.5;
   cues.finished();
+  expect(player.src).toBe("blob:cue-1"); // normal level restored before speech
   expect(player.currentTime).toBe(0);
   expect(await cues.ready()).toBe(true);
   expect(player.play).toHaveBeenCalledTimes(3);
@@ -40,12 +44,13 @@ it("reuses one media player and WAV for tap, finish, and post-reply cues, includ
   expect(revokeObjectURL).not.toHaveBeenCalled();
   expect(await cues.ready()).toBe(true);
   expect(players).toHaveLength(1);
-  expect(createObjectURL).toHaveBeenCalledOnce();
+  expect(createObjectURL).toHaveBeenCalledTimes(2);
+  expect(player.src).toBe("blob:cue-1");
   expect(audioContext).not.toHaveBeenCalled(); // Web Audio is reserved for thinking
   cues.dispose();
   cues.dispose();
   expect(player.removeAttribute).toHaveBeenCalledWith("src");
-  expect(revokeObjectURL).toHaveBeenCalledOnce();
+  expect(revokeObjectURL).toHaveBeenCalledTimes(2);
   expect(await cues.ready()).toBe(false);
   expect(player.play).toHaveBeenCalledTimes(4);
 });

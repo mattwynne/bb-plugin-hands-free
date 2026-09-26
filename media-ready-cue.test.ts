@@ -27,6 +27,47 @@ it("uses identical unboosted WAV bytes for production and diagnostics without cl
   expect(await blobs[1]!.arrayBuffer()).toEqual(await blobs[0]!.arrayBuffer());
 });
 
+it("attenuates only the tap PCM and restores the cached normal source on the same player", async () => {
+  const blobs: Blob[] = [];
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("Blob", NodeBlob);
+  vi.stubGlobal("URL", {
+    createObjectURL: (blob: Blob) => { blobs.push(blob); return `blob:cue-${blobs.length}`; },
+    revokeObjectURL,
+  });
+  const srcWrites: string[] = [];
+  const audio = vi.fn(function (this: HTMLAudioElement, src: string) {
+    let source = src;
+    Object.defineProperty(this, "src", {
+      get: () => source, set: (value: string) => { source = value; srcWrites.push(value); },
+    });
+    this.pause = vi.fn(); this.removeAttribute = vi.fn(); this.load = vi.fn();
+  });
+  vi.stubGlobal("Audio", audio);
+  const cue = createMediaReadyCue()!;
+  cue.selectLevel("tap");
+  expect(cue.audio.src).toBe("blob:cue-2");
+  cue.selectLevel("normal");
+  expect(cue.audio.src).toBe("blob:cue-1");
+  cue.selectLevel("normal"); // post-reply must NOT reload the already-played finish source
+  expect(srcWrites).toEqual(["blob:cue-2", "blob:cue-1"]);
+  cue.selectLevel("tap");
+  expect(audio).toHaveBeenCalledOnce();
+  expect(blobs).toHaveLength(2);
+  const normal = new DataView(await blobs[0]!.arrayBuffer());
+  const tap = new DataView(await blobs[1]!.arrayBuffer());
+  expect(tap.byteLength).toBe(normal.byteLength);
+  expect(new Uint8Array(tap.buffer, 0, 44)).toEqual(new Uint8Array(normal.buffer, 0, 44));
+  for (let i = 44; i < normal.byteLength; i += 2) {
+    expect(Math.abs(tap.getInt16(i, true) - normal.getInt16(i, true) * 0.75)).toBeLessThanOrEqual(1);
+  }
+  cue.dispose();
+  cue.dispose();
+  cue.selectLevel("normal");
+  expect(revokeObjectURL.mock.calls).toEqual([["blob:cue-1"], ["blob:cue-2"]]);
+  expect(srcWrites).toHaveLength(3);
+});
+
 it("creates and disposes a local WAV media element without Web Audio", () => {
   const createObjectURL = vi.fn(() => "blob:ready-cue");
   const revokeObjectURL = vi.fn();

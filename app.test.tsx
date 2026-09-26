@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 it.each(["stream", "device"] as const)("reuses the cue player through recording, finish, and a %s reply without breaking capture", async (speechMode) => {
-  const createObjectURL = vi.fn(() => "blob:shared-cue");
+  const createObjectURL = vi.fn().mockReturnValueOnce("blob:shared-cue").mockReturnValueOnce("blob:tap-cue");
   vi.stubGlobal("URL", { createObjectURL, revokeObjectURL: vi.fn() });
   const stopTracks = vi.fn();
   Object.defineProperty(navigator, "mediaDevices", {
@@ -73,8 +73,10 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
   expect(slot.queryByText("Send this reply")).toBeNull();
 
   await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
+  expect(players).toHaveLength(0); // opening an idle thread is silent
   fireEvent.click(slot.getByRole("button", { name: "Start dictating" }));
   await waitFor(() => expect(slot!.getByRole("button", { name: "Finish dictating" })).toBeTruthy());
+  expect(players[0]!.src).toBe("blob:tap-cue");
   await act(async () => { fireEvent.click(slot!.getByRole("button", { name: "Finish dictating" })); });
   await waitFor(() => expect(sent).toHaveBeenCalledWith({ threadId: "th_1", text: "Fix the test" }));
   expect(fetchMock).toHaveBeenCalledWith("/api/v1/system/voice-transcription", expect.objectContaining({ method: "POST" }));
@@ -86,7 +88,7 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
   const player = players[1];
   expect(players).toHaveLength(speechMode === "stream" ? 2 : 1);
   expect(cuePlayer.src).toBe("blob:shared-cue");
-  expect(cuePlayer.play).toHaveBeenCalledTimes(3); // page ready, capture started, finish
+  expect(cuePlayer.play).toHaveBeenCalledTimes(2); // capture started, finish; no opening cue
   expect(stopTracks).toHaveBeenCalledOnce();
   expect(slot.getByRole("button", { name: "■ Stop audio" })).toBeTruthy();
   expect(slot.queryByText("The test is fixed.")).toBeNull();
@@ -97,8 +99,8 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
     if (speechMode === "stream") player!.onended?.();
     else { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(1000); }
   });
-  expect(cuePlayer.play).toHaveBeenCalledTimes(4); // post-reply: same player/source
-  expect(createObjectURL).toHaveBeenCalledOnce();
+  expect(cuePlayer.play).toHaveBeenCalledTimes(3); // post-reply: same player/normal source as finish
+  expect(createObjectURL).toHaveBeenCalledTimes(2); // cached normal and quieter tap WAVs
   const pauses = cuePlayer.pause.mock.calls.length;
   if (player) expect(player.pause).not.toHaveBeenCalled();
   await act(async () => { await vi.advanceTimersByTimeAsync(speechMode === "stream" ? 1199 : 1499); });
@@ -153,16 +155,16 @@ it("retains the same local cue player across device replies, Stop, and late spee
   await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await waitFor(() => expect(utterance).not.toBeNull());
   const priorCancelCalls = cancelSpeech.mock.calls.length;
-  const cuePlayer = players[0]!;
-  expect(play).toHaveBeenCalledOnce(); // ready before speech actually played this element
+  expect(play).not.toHaveBeenCalled(); // no opening cue, and this scenario has no dictation
   vi.useFakeTimers();
   await act(async () => { utterance!.onend?.(); });
   expect(cancelSpeech).toHaveBeenCalledTimes(priorCancelCalls + 1);
   await act(async () => { await vi.advanceTimersByTimeAsync(999); });
-  expect(play).toHaveBeenCalledOnce(); // existing post-speech delay stays unchanged
+  expect(play).not.toHaveBeenCalled(); // existing post-speech delay stays unchanged
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-  expect(play).toHaveBeenCalledTimes(2);
+  expect(play).toHaveBeenCalledOnce();
   expect(players).toHaveLength(1);
+  const cuePlayer = players[0]!;
   expect(cuePlayer.src).toBe("blob:local-ready-cue");
   expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: "audio/wav" }));
   await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
@@ -170,16 +172,16 @@ it("retains the same local cue player across device replies, Stop, and late spee
 
   await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await act(async () => { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(1000); });
-  expect(play).toHaveBeenCalledTimes(3);
+  expect(play).toHaveBeenCalledTimes(2);
   fireEvent.click(slot.getByRole("button", { name: "■ Stop audio" }));
   await act(async () => { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(3000); });
-  expect(play).toHaveBeenCalledTimes(3); // a late speech callback cannot revive stopped playback
+  expect(play).toHaveBeenCalledTimes(2); // a late speech callback cannot revive stopped playback
 
   await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await act(async () => { utterance!.onend?.(); });
   fireEvent.click(slot.getByRole("button", { name: "■ Stop audio" }));
   await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
-  expect(play).toHaveBeenCalledTimes(3); // Stop also cancels the pending delayed cue
+  expect(play).toHaveBeenCalledTimes(2); // Stop also cancels the pending delayed cue
   expect(cuePlayer.removeAttribute).not.toHaveBeenCalled();
   expect(cuePlayer.load).not.toHaveBeenCalled();
   expect(players).toHaveLength(1);
@@ -263,14 +265,14 @@ it.each(["end-sync", "end-queued", "silence-sync", "silence-queued", "active-err
     const failure = slot.queryByText("Speech playback failed. Read the reply on screen.");
     if (mode.endsWith("error")) expect(failure).not.toBeNull();
     else expect(failure).toBeNull();
-    expect(play).toHaveBeenCalledTimes(mode === "stopped" ? 1 : 2); // never schedule duplicate ready cues
+    expect(play).toHaveBeenCalledTimes(mode === "stopped" ? 0 : 1); // no opening/duplicate cues
     expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
     // A callback already queued by the browser must be harmless even after detachment.
     await act(async () => {
       for (let i = 0; i < 40; i++) queuedError?.({ error: "interrupted", message: "Private detail" });
       await vi.advanceTimersByTimeAsync(3000);
     });
-    expect(play).toHaveBeenCalledTimes(mode === "stopped" ? 1 : 2);
+    expect(play).toHaveBeenCalledTimes(mode === "stopped" ? 0 : 1);
     if (!mode.endsWith("error")) expect(slot.queryByText("Speech playback failed. Read the reply on screen.")).toBeNull();
     expect(diagnostic).toHaveBeenCalled();
     expect(diagnostic.mock.calls.length).toBeLessThanOrEqual(16);

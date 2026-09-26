@@ -236,7 +236,8 @@ function VoicePage({ subPath }: { subPath: string }) {
       void rpc.call("state", { threadId: selectedId }).then(({ state }) => {
         if (!active.current || selectedRef.current !== selectedId || phaseToken.current !== token) return;
         transition(state);
-        if (state === "ready") { cues.current?.ready(); setNotice("Ready. Tap to talk."); }
+        // Opening/selecting a ready thread is not a recording or reply event.
+        if (state === "ready") setNotice("Ready. Tap to talk.");
         else if (state === "attention") setNotice("Agent needs your attention. Open the thread to respond.");
         else setNotice("Agent is thinking. Talk is disabled until it finishes.");
       }, () => {
@@ -366,7 +367,7 @@ function VoicePage({ subPath }: { subPath: string }) {
     };
     try {
       instance.start(); // Synchronous tap gesture, required by iOS permissions.
-      cues.current?.ready();
+      cues.current?.started();
       setListening(true);
       setNotice("Listening. Tap Finish dictating to send your words.");
     } catch {
@@ -431,7 +432,7 @@ function VoicePage({ subPath }: { subPath: string }) {
         } finally { if (capture === captureGeneration.current && active.current) setBusy(false); }
       };
       instance.start();
-      cues.current?.ready();
+      cues.current?.started();
       setBusy(false);
       setListening(true);
       setNotice("Recording. Tap Finish dictating; recording ends automatically after one minute.");
@@ -458,7 +459,7 @@ function VoicePage({ subPath }: { subPath: string }) {
     <main className="h-full min-h-0 overflow-y-auto px-4 py-5" aria-label="Voice Drive">
       <div className="mx-auto max-w-xl space-y-5 pb-12">
         <h1 className="text-2xl font-bold">Voice Drive</h1>
-        <p className="text-sm text-muted-foreground">Listen for the ready tone, then tap to dictate. The finish tone confirms your words are being sent. Quiet notes play while the agent works. Pull over to review code or approve permissions.</p>
+        <p className="text-sm text-muted-foreground">Tap to dictate; a tone confirms recording has started. The finish tone confirms your words are being sent. Quiet notes play while the agent works. Pull over to review code or approve permissions.</p>
         <label className="block text-base font-semibold" htmlFor="voice-drive-thread">Thread</label>
         <select id="voice-drive-thread" className="w-full min-h-14 rounded-xl border bg-background px-3 text-base" value={selectedId} onChange={(event) => navigate.toPluginPanel("drive", { subPath: encodeURIComponent(event.target.value) })}>
           <option value="">Choose a thread</option>
