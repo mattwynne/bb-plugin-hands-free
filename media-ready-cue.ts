@@ -2,7 +2,7 @@ import { READY_CUE_GAIN } from "./voice-cues";
 
 // Local PCM WAV used only after device speech. iOS attenuates this media route
 // even after a delay, so compensate here without changing the loud pre-speech cue.
-export const POST_SPEECH_MEDIA_GAIN = READY_CUE_GAIN * 6;
+export const POST_SPEECH_MEDIA_GAIN = READY_CUE_GAIN * 8;
 const NOTE_LENGTH = 0.28;
 const FADE_IN = 0.025;
 const MIN_GAIN = 0.0001;
