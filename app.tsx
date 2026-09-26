@@ -25,7 +25,8 @@ function VoicePage({ subPath }: { subPath: string }) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const { threads, status: threadsStatus } = experimental_useSidebarThreads();
-  const selectedId = decodeURIComponent(subPath.split("/")[0] ?? "");
+  let selectedId = "";
+  try { selectedId = decodeURIComponent(subPath.split("/")[0] ?? ""); } catch { /* Invalid URL: leave selection empty. */ }
   const selected = threads.find((thread) => thread.id === selectedId);
   const [draft, setDraft] = useState("");
   const [latest, setLatest] = useState<string | null>(null);
@@ -40,6 +41,7 @@ function VoicePage({ subPath }: { subPath: string }) {
   const recordingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
   const sequence = useRef(0);
+  const captureGeneration = useRef(0);
   const baseDraft = useRef("");
   const speakingRef = useRef(false);
   const autoReadRef = useRef(false);
@@ -107,6 +109,7 @@ function VoicePage({ subPath }: { subPath: string }) {
   }, [stopAudio]);
 
   useEffect(() => {
+    captureGeneration.current += 1;
     recognition.current?.abort();
     recognition.current = null;
     if (recorder.current?.state === "recording") { recorder.current.onstop = null; recorder.current.stop(); }
@@ -115,12 +118,14 @@ function VoicePage({ subPath }: { subPath: string }) {
     recordingStream.current = null;
     if (recordingTimer.current) clearTimeout(recordingTimer.current);
     setListening(false);
+    setBusy(false);
     setDraft("");
     setLatest(null);
     setAutoRead(false);
     setNotice("");
     stopAudio();
     return () => {
+      captureGeneration.current += 1;
       recognition.current?.abort(); recognition.current = null;
       if (recorder.current?.state === "recording") { recorder.current.onstop = null; recorder.current.stop(); }
       recordingStream.current?.getTracks().forEach((track) => track.stop());
@@ -191,9 +196,11 @@ function VoicePage({ subPath }: { subPath: string }) {
       return;
     }
     const owner = selectedId;
+    const capture = ++captureGeneration.current;
+    setBusy(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (selectedRef.current !== owner) { stream.getTracks().forEach((track) => track.stop()); return; }
+      if (capture !== captureGeneration.current || selectedRef.current !== owner) { stream.getTracks().forEach((track) => track.stop()); return; }
       const mimeType = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find((type) => MediaRecorder.isTypeSupported(type));
       const instance = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       const chunks: BlobPart[] = [];
@@ -201,14 +208,17 @@ function VoicePage({ subPath }: { subPath: string }) {
       recordingStream.current = stream;
       baseDraft.current = draft.trim();
       instance.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-      instance.onerror = () => { setNotice("Recording failed. Use the iPhone keyboard microphone instead."); };
+      instance.onerror = () => {
+        if (instance.state === "recording") instance.stop();
+        setNotice("Recording failed. Use the iPhone keyboard microphone instead.");
+      };
       instance.onstop = async () => {
         stream.getTracks().forEach((track) => track.stop());
         if (recordingTimer.current) clearTimeout(recordingTimer.current);
         recordingStream.current = null;
         recorder.current = null;
         setListening(false);
-        if (selectedRef.current !== owner) return;
+        if (capture !== captureGeneration.current || selectedRef.current !== owner) return;
         const blob = new Blob(chunks, { type: instance.mimeType || "audio/mp4" });
         if (!blob.size) { setNotice("No audio was recorded. Try again."); return; }
         setBusy(true);
@@ -220,7 +230,7 @@ function VoicePage({ subPath }: { subPath: string }) {
           if (!response.ok) throw new Error(`Transcription failed (${response.status})`);
           const data: unknown = await response.json();
           if (!data || typeof data !== "object" || !("text" in data) || typeof data.text !== "string") throw new Error("Invalid transcription response");
-          if (selectedRef.current !== owner) return;
+          if (capture !== captureGeneration.current || selectedRef.current !== owner) return;
           setDraft([baseDraft.current, data.text.trim()].filter(Boolean).join(" "));
           setNotice("Review the transcript, then tap Send this reply.");
         } catch (error) {
@@ -228,13 +238,18 @@ function VoicePage({ subPath }: { subPath: string }) {
         } finally { setBusy(false); }
       };
       instance.start();
+      setBusy(false);
       setListening(true);
       setNotice("Recording. Tap Finish dictating; recording ends automatically after one minute.");
       recordingTimer.current = setTimeout(() => { if (instance.state === "recording") instance.stop(); }, 60000);
     } catch {
-      setNotice("Microphone permission or recording unavailable. Try the iPhone keyboard microphone.");
-      document.getElementById("voice-drive-draft")?.focus();
-    }
+      if (capture === captureGeneration.current) {
+        recordingStream.current?.getTracks().forEach((track) => track.stop());
+        recordingStream.current = null;
+        setNotice("Microphone permission or recording unavailable. Try the iPhone keyboard microphone.");
+        document.getElementById("voice-drive-draft")?.focus();
+      }
+    } finally { if (capture === captureGeneration.current && !recorder.current) setBusy(false); }
   };
   const stopListening = () => {
     if (recorder.current?.state === "recording") recorder.current.stop();
