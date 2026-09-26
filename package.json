@@ -7,8 +7,8 @@
     "bbPluginSdk": ">=0.4.87"
   },
   "bb": {
-    "name": "Voice Drive",
-    "description": "Tap-to-talk voice companion for BB threads on iPhone",
+    "name": "Hands-Free",
+    "description": "Tap-to-talk and spoken-reply companion for BB threads",
     "branding": {
       "icon": "Mic"
     },

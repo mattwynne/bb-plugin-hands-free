@@ -5,8 +5,22 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 
 const app = await loadPluginApp(() => import("./app"));
-it("registers only the production Voice Drive sidebar panel", () => {
-  expect(app.navPanels.map((panel) => panel.id)).toEqual(["drive"]);
+it("registers Hands-Free on the existing sidebar route", () => {
+  expect(app.navPanels).toHaveLength(1);
+  expect(app.navPanels[0]).toMatchObject({ id: "drive", path: "drive", title: "Hands-Free" });
+  expect(app.threadHeaderActions).toHaveLength(1);
+  expect(app.threadHeaderActions[0]).toMatchObject({ id: "open-drive", title: "Hands-Free" });
+
+  const page = renderSlot(app.navPanels[0]!, { subPath: "" }, { sidebarThreads: { threads: [] } });
+  expect(page.getByRole("main", { name: "Hands-Free" })).toBeTruthy();
+  expect(page.getByRole("heading", { name: "Hands-Free" })).toBeTruthy();
+  page.lifecycle.unmount();
+
+  const header = renderSlot(app.threadHeaderActions[0]!, {
+    threadId: "th_1", projectId: "prj_1", isCompactViewport: false,
+  });
+  expect(header.getByRole("button", { name: "Open Hands-Free for this thread" })).toBeTruthy();
+  header.lifecycle.unmount();
 });
 let slot: ReturnType<typeof renderSlot> | undefined;
 afterEach(() => {

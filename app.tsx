@@ -22,7 +22,7 @@ function recognitionConstructor(): RecognitionConstructor | undefined {
 
 const READ_ALOUD = "/api/v1/plugins/read-aloud/http";
 const MAX_SPEAK = 12000;
-function VoicePage({ subPath }: { subPath: string }) {
+function HandsFreePage({ subPath }: { subPath: string }) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const { threads, status: threadsStatus } = experimental_useSidebarThreads();
@@ -221,7 +221,7 @@ function VoicePage({ subPath }: { subPath: string }) {
       }, () => {
         if (active.current && selectedRef.current === selectedId && phaseToken.current === token) {
           transition("attention");
-          setNotice("Could not check thread status. Reopen Voice Drive to retry.");
+          setNotice("Could not check thread status. Reopen Hands-Free to retry.");
         }
       });
     }
@@ -434,10 +434,10 @@ function VoicePage({ subPath }: { subPath: string }) {
     setListening(false);
   };
   return (
-    <main className="h-full min-h-0 overflow-y-auto px-4 py-5" aria-label="Voice Drive">
+    <main className="h-full min-h-0 overflow-y-auto px-4 py-5" aria-label="Hands-Free">
       <div className="mx-auto max-w-xl space-y-5 pb-12">
-        <h1 className="text-2xl font-bold">Voice Drive</h1>
-        <p className="text-sm text-muted-foreground">Tap to dictate; a tone confirms recording has started. The finish tone confirms your words are being sent. A falling chime marks the end of the spoken reply. Quiet notes play while the agent works. Pull over to review code or approve permissions.</p>
+        <h1 className="text-2xl font-bold">Hands-Free</h1>
+        <p className="text-sm text-muted-foreground">Tap to dictate; a tone confirms recording has started. The finish tone confirms your words are being sent. A falling chime marks the end of the spoken reply. Quiet notes play while the agent works. Open the thread to review code or respond to permission prompts.</p>
         <label className="block text-base font-semibold" htmlFor="voice-drive-thread">Thread</label>
         <select id="voice-drive-thread" className="w-full min-h-14 rounded-xl border bg-background px-3 text-base" value={selectedId} onChange={(event) => navigate.toPluginPanel("drive", { subPath: encodeURIComponent(event.target.value) })}>
           <option value="">Choose a thread</option>
@@ -462,18 +462,18 @@ function VoicePage({ subPath }: { subPath: string }) {
         </div>}
         {speaking && <button type="button" onClick={stopAudio} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold">■ Stop audio</button>}
         {notice && <p role="status" aria-live="polite" className="rounded-xl border p-3 text-sm">{notice}</p>}
-        <p className="text-xs text-muted-foreground">Keep BB open and unlocked. iOS may pause audio or the microphone when the app is backgrounded. Read Aloud is optional; device speech is used if its service is unavailable. This is not CarPlay.</p>
+        <p className="text-xs text-muted-foreground">Keep BB open and unlocked. iOS may pause audio or the microphone when the app is backgrounded. Read Aloud is optional; device speech is used if its service is unavailable.</p>
       </div>
     </main>
   );
 }
 
-function OpenVoiceDrive({ threadId }: { threadId: string }) {
+function OpenHandsFree({ threadId }: { threadId: string }) {
   const navigate = useBbNavigate();
-  return <button type="button" aria-label="Open Voice Drive for this thread" title="Voice Drive" onClick={() => navigate.toPluginPanel("drive", { subPath: encodeURIComponent(threadId) })} className="rounded-md border px-2 text-sm font-bold">🎙 Voice</button>;
+  return <button type="button" aria-label="Open Hands-Free for this thread" title="Hands-Free" onClick={() => navigate.toPluginPanel("drive", { subPath: encodeURIComponent(threadId) })} className="rounded-md border px-2 text-sm font-bold">🎙 Hands-Free</button>;
 }
 
 export default definePluginApp((app) => {
-  app.slots.navPanel({ id: "drive", title: "Voice Drive", icon: "Mic", path: "drive", component: VoicePage });
-  app.slots.experimental_threadHeaderAction({ id: "open-drive", title: "Voice Drive", component: OpenVoiceDrive });
+  app.slots.navPanel({ id: "drive", title: "Hands-Free", icon: "Mic", path: "drive", component: HandsFreePage });
+  app.slots.experimental_threadHeaderAction({ id: "open-drive", title: "Hands-Free", component: OpenHandsFree });
 });
