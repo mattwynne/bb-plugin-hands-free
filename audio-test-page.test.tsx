@@ -28,6 +28,9 @@ it("runs from its own panel, reports only metadata, and cleans up on navigation"
   vi.stubGlobal("Audio", FakeAudio);
   vi.stubGlobal("URL", { createObjectURL: () => "blob:comparison", revokeObjectURL: vi.fn() });
   vi.stubGlobal("speechSynthesis", { speaking: false, pending: false, cancel: vi.fn() });
+  const track = { readyState: "live", onended: null, stop: vi.fn() };
+  const getUserMedia = vi.fn(async () => ({ getTracks: () => [track], getAudioTracks: () => [track] }));
+  vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
   const diagnostic = vi.fn(async (_args: unknown) => ({ recorded: true }));
   const panel = app.navPanels.find((panel) => panel.id === "audio-test")!;
   expect(panel).toBeTruthy();
@@ -45,10 +48,15 @@ it("runs from its own panel, reports only metadata, and cleans up on navigation"
   expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ variant: "control", event: "complete" }));
   const ids = new Set(diagnostic.mock.calls.map(([args]) => (args as { session: string }).session));
   expect(ids.size).toBe(1);
-  fireEvent.click(slot.getByRole("button", { name: "1. Tone-only control" }));
+  expect(getUserMedia).not.toHaveBeenCalled();
+  await act(async () => { fireEvent.click(slot!.getByRole("button", { name: "3. Microphone comparison" })); });
+  expect(getUserMedia).toHaveBeenCalledOnce();
+  expect(slot.getByText("Tone A (microphone open)")).toBeTruthy();
+  expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ variant: "capture", event: "mic-open" }));
   slot.lifecycle.unmount();
   slot = undefined;
   expect(players[1]!.pause).toHaveBeenCalledOnce();
+  expect(track.stop).toHaveBeenCalledOnce();
   expect(diagnostic).toHaveBeenLastCalledWith(expect.objectContaining({ event: "stopped" }));
   expect(vi.getTimerCount()).toBe(0);
 });

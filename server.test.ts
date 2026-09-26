@@ -17,6 +17,16 @@ describe("voice-drive", () => {
     await harness.lifecycle.dispose();
   });
 
+  it("accepts only bounded microphone-comparison metadata", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "voice-drive" });
+    plugin(bb);
+    const entry = { session: "capture-run-123", variant: "capture", event: "mic-stopped", elapsedMs: 600, sessionType: "auto" };
+    expect(await harness.behavior.callRpc("audioTestDiagnostic", entry)).toEqual({ recorded: true });
+    expect(JSON.stringify(harness.logEntries)).toContain("variant=capture event=mic-stopped");
+    await expect(harness.behavior.callRpc("audioTestDiagnostic", { ...entry, recording: "private audio" })).rejects.toThrow();
+    await harness.lifecycle.dispose();
+  });
+
   it("reads only the requested thread and broadcasts an id without content", async () => {
     const output = vi.fn(async () => ({ output: "Private answer" }));
     const { bb, harness } = createFakePluginHost({ pluginId: "voice-drive", sdk: { threads: { output } } });

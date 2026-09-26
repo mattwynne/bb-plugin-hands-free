@@ -19,7 +19,7 @@ export const rpcContract = defineRpcContract({
   audioTestDiagnostic: {
     input: z.object({
       session: z.string().regex(/^[a-zA-Z0-9-]{8,40}$/),
-      variant: z.enum(["control", "speech"]),
+      variant: z.enum(["control", "speech", "capture"]),
       event: z.enum(AUDIO_COMPARISON_EVENTS),
       elapsedMs: z.number().int().min(0).max(60000),
       sessionType: z.enum(AUDIO_SESSION_TYPES),

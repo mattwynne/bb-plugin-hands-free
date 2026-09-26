@@ -32,6 +32,7 @@ const revokeObjectURL = vi.fn();
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  getUserMedia.mockReset();
   players = [];
   utterances = [];
   vi.stubGlobal("Audio", FakeAudio);
@@ -130,6 +131,132 @@ it("times out missing speech completion rather than silently using a guessed end
   expect(events).toHaveBeenLastCalledWith("timeout");
   expect(players[0]!.play).toHaveBeenCalledOnce();
   expect(cancel).toHaveBeenCalledOnce();
+});
+
+class FakeTrack {
+  readyState: MediaStreamTrackState = "live";
+  onended: (() => void) | null = null;
+  stop = vi.fn(() => { this.readyState = "ended"; });
+}
+function fakeStream(track: FakeTrack): MediaStream {
+  return { getTracks: () => [track], getAudioTracks: () => [track] } as unknown as MediaStream;
+}
+
+it("compares the same tone during capture and after all tracks stop, without recording or speech", async () => {
+  const track = new FakeTrack();
+  const recorder = vi.fn();
+  vi.stubGlobal("MediaRecorder", recorder);
+  getUserMedia.mockResolvedValueOnce(fakeStream(track));
+  const events = vi.fn();
+  startAudioComparison("capture", events);
+  expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+  expect(players[0]!.play).not.toHaveBeenCalled();
+  await Promise.resolve();
+  expect(players[0]!.play).toHaveBeenCalledOnce();
+  expect(track.stop).not.toHaveBeenCalled();
+  players[0]!.onended?.();
+  expect(track.stop).toHaveBeenCalledOnce();
+  expect(track.readyState).toBe("ended");
+  await vi.advanceTimersByTimeAsync(999);
+  expect(players[0]!.play).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(players[0]!.play).toHaveBeenCalledTimes(2);
+  players[0]!.onended?.();
+  expect(events.mock.calls.map(([event]) => event)).toEqual([
+    "start", "mic-request", "mic-open", "before-request", "before-playing",
+    "before-ended", "mic-stopped", "after-request", "after-playing", "after-ended", "complete",
+  ]);
+  expect(players).toHaveLength(1);
+  expect(track.stop).toHaveBeenCalledOnce();
+  expect(recorder).not.toHaveBeenCalled();
+  expect(speak).not.toHaveBeenCalled();
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(sessionWrite).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each(["stop", "timeout"] as const)("releases a late microphone grant after %s without playing", async (reason) => {
+  const track = new FakeTrack();
+  let grant!: (stream: MediaStream) => void;
+  getUserMedia.mockReturnValueOnce(new Promise<MediaStream>((resolve) => { grant = resolve; }));
+  const events = vi.fn();
+  const comparison = startAudioComparison("capture", events);
+  if (reason === "stop") comparison.stop();
+  else await vi.advanceTimersByTimeAsync(20000);
+  grant(fakeStream(track));
+  await Promise.resolve();
+  expect(track.stop).toHaveBeenCalledOnce();
+  expect(players[0]!.play).not.toHaveBeenCalled();
+  expect(events).toHaveBeenLastCalledWith(reason === "stop" ? "stopped" : "timeout");
+  expect(events).not.toHaveBeenCalledWith("mic-open");
+});
+
+it.each([
+  ["NotAllowedError", "mic-denied"],
+  ["InvalidStateError", "mic-invalid-state"],
+  ["NotReadableError", "mic-error"],
+])("reports %s without logging the error message", async (name, event) => {
+  getUserMedia.mockRejectedValueOnce(new DOMException("private error", name));
+  const events = vi.fn();
+  startAudioComparison("capture", events);
+  await Promise.resolve();
+  expect(events).toHaveBeenLastCalledWith(event);
+  expect(players[0]!.play).not.toHaveBeenCalled();
+  expect(JSON.stringify(events.mock.calls)).not.toContain("private error");
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("closes capture on stop and ignores late tone completion", async () => {
+  const track = new FakeTrack();
+  getUserMedia.mockResolvedValueOnce(fakeStream(track));
+  const events = vi.fn();
+  const comparison = startAudioComparison("capture", events);
+  await Promise.resolve();
+  const lateEnd = players[0]!.onended;
+  comparison.stop();
+  lateEnd?.();
+  expect(track.stop).toHaveBeenCalledOnce();
+  expect(track.onended).toBeNull();
+  expect(events).toHaveBeenLastCalledWith("stopped");
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(players[0]!.play).toHaveBeenCalledOnce();
+});
+
+it("closes capture if the first tone is blocked", async () => {
+  const track = new FakeTrack();
+  getUserMedia.mockResolvedValueOnce(fakeStream(track));
+  const events = vi.fn();
+  startAudioComparison("capture", events);
+  players[0]!.play.mockRejectedValueOnce(new DOMException("blocked", "NotAllowedError"));
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(events).toHaveBeenLastCalledWith("play-blocked");
+  expect(track.stop).toHaveBeenCalledOnce();
+});
+
+it("stops microphone capture when the page is hidden", async () => {
+  const track = new FakeTrack();
+  getUserMedia.mockResolvedValueOnce(fakeStream(track));
+  const events = vi.fn();
+  startAudioComparison("capture", events);
+  await Promise.resolve();
+  window.dispatchEvent(new Event("pagehide"));
+  expect(track.stop).toHaveBeenCalledOnce();
+  expect(events).toHaveBeenLastCalledWith("stopped");
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("marks unexpected capture loss as failure, not a valid comparison", async () => {
+  const track = new FakeTrack();
+  getUserMedia.mockResolvedValueOnce(fakeStream(track));
+  const events = vi.fn();
+  startAudioComparison("capture", events);
+  await Promise.resolve();
+  track.readyState = "ended";
+  track.onended?.();
+  expect(events).toHaveBeenLastCalledWith("mic-error");
+  expect(players[0]!.play).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it("refuses to run over existing speech without cancelling it", () => {

@@ -152,4 +152,20 @@ The user confirmed **native BB app, phone speaker**, on a recent but unspecified
 
 Completion is event-driven; missing callbacks fail with a watchdog rather than silently guessing speech completion. User stop/navigation cleans up only the test's audio and its own active speech. Fixed-vocabulary, rate-limited events identify the run and timing via `bb plugin logs voice-drive`. The existing 8× production cue is unchanged; the new factory parameter is used only to select unboosted `0.14` for this diagnostic.
 
-On-device result is pending. First obtain the control and speech-only comparisons before implementing a session-reset hypothesis. If either fails to play, logs must distinguish permission/error/missing-event failure from quiet output. Relaunching the app is a preparation step, not a claimed guarantee of native session reset.
+### First on-device results
+
+The user ran the tone-only control (run `064ff7d3-fad2-435e-9141-c809a1e1a435`), reporting that the sounds matched. Logs show both media plays ended and the run completed, with declared session type `auto` throughout. The initial wording described the sounds rather than a measured loudness difference.
+
+Three speech-comparison runs (`51c0b6db-5c61-4094-bbc3-ae5373abc18d`, `1600a6b8-4671-4c10-8dc9-c11c7cb2dfb3`, `6f658139-dd7e-4551-9a26-f212c0c369c3`) completed. Each logged device speech start/end and subsequent media playing/ended, without a failure event. Declared session type remained `auto`; this does not reveal the native category or route. The second media play began 10–32 ms after the speech-end callback. The user's assessment was that B might be marginally quieter, but the difference was hard to tell and very close.
+
+**Interpretation:** the large relative volume loss was not clearly reproduced with this short utterance, no microphone, and identical unboosted media on a reused player. This weakens a blanket claim that device speech necessarily causes severe persistent attenuation. It does not rule out speech-duration effects, capture/session transitions, a fresh-player handoff, or interaction with the production Web Audio context. Absolute loudness has not been measured.
+
+The user then authorized an explicitly started microphone comparison without speech. Do not implement a session reset or further gain change on the strength of the preceding results. If any test fails to play, distinguish permission/error/missing-event failure from quiet output. Relaunching the app is a preparation step, not a claimed guarantee of native session reset.
+
+### Microphone comparison (awaiting device results)
+
+Test 3 explicitly calls `getUserMedia({ audio: true })`, plays A on the same unboosted media player while capture tracks are live, stops every track after A ends, waits the same one-second gap used by the tone-only control, and plays B. It never creates a `MediaRecorder`, retains microphone audio data, connects the capture stream to output, uploads/transcribes anything, or invokes speech synthesis. It does not change `navigator.audioSession.type` or Web Audio. Normal Voice Drive behavior and the existing two comparison variants remain unchanged.
+
+This tests whether moving from live capture to stopped tracks changes media-cue loudness. It does not yet test `MediaRecorder` or a capture-then-speech combination, and the one-second comparison gap is not proof of native-session release. Metadata adds mic-request/open/stopped and bounded failure events, including a distinct InvalidStateError outcome. All tracks are released on completion, stop, navigation, backgrounding, playback failure, or timeout. If permission resolves after cancellation, those late tracks are stopped immediately and neither tone is played.
+
+On-device result is pending. Compare A (mic open) with B (mic closed), and check that the mic indicator clears. Unit tests cover capture sequencing, no recording/network/session writes, permission rejection, late grants, playback failure, interruption, and cleanup; they cannot measure acoustic loudness.
