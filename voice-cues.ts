@@ -22,7 +22,7 @@ export function createVoiceCues(): VoiceCues {
   let disposed = false;
   let thinking = false;
 
-  const playReady = async (level: "normal" | "tap" = "normal"): Promise<boolean> => {
+  const playReady = async (level: "normal" | "tap" | "reply" = "normal"): Promise<boolean> => {
     if (disposed) return false;
     try {
       readyCue ??= createMediaReadyCue();
@@ -79,7 +79,7 @@ export function createVoiceCues(): VoiceCues {
   };
   return {
     unlock() { void activate(); },
-    ready: () => playReady(),
+    ready: () => playReady("reply"),
     started() { void playReady("tap"); },
     finished() { void playReady(); },
     stopCue() { readyCue?.audio.pause(); }, // retain source/player for the next cue

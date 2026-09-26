@@ -49,7 +49,7 @@ it("attenuates only the tap PCM and restores the cached normal source on the sam
   expect(cue.audio.src).toBe("blob:cue-2");
   cue.selectLevel("normal");
   expect(cue.audio.src).toBe("blob:cue-1");
-  cue.selectLevel("normal"); // post-reply must NOT reload the already-played finish source
+  cue.selectLevel("normal"); // repeated selection must not reload a cached source
   expect(srcWrites).toEqual(["blob:cue-2", "blob:cue-1"]);
   cue.selectLevel("tap");
   expect(audio).toHaveBeenCalledOnce();
@@ -59,13 +59,50 @@ it("attenuates only the tap PCM and restores the cached normal source on the sam
   expect(tap.byteLength).toBe(normal.byteLength);
   expect(new Uint8Array(tap.buffer, 0, 44)).toEqual(new Uint8Array(normal.buffer, 0, 44));
   for (let i = 44; i < normal.byteLength; i += 2) {
-    expect(Math.abs(tap.getInt16(i, true) - normal.getInt16(i, true) * 0.75)).toBeLessThanOrEqual(1);
+    expect(Math.abs(tap.getInt16(i, true) - normal.getInt16(i, true) * 0.85)).toBeLessThanOrEqual(1);
   }
   cue.dispose();
   cue.dispose();
   cue.selectLevel("normal");
   expect(revokeObjectURL.mock.calls).toEqual([["blob:cue-1"], ["blob:cue-2"]]);
   expect(srcWrites).toHaveLength(3);
+});
+
+it("uses a cached falling 659→523 Hz reply cue without creating another player or boosting gain", async () => {
+  const blobs: Blob[] = [];
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("Blob", NodeBlob);
+  vi.stubGlobal("URL", {
+    createObjectURL: (blob: Blob) => { blobs.push(blob); return `blob:cue-${blobs.length}`; },
+    revokeObjectURL,
+  });
+  const audio = vi.fn(function (this: HTMLAudioElement, src: string) {
+    this.src = src; this.pause = vi.fn(); this.removeAttribute = vi.fn(); this.load = vi.fn();
+  });
+  vi.stubGlobal("Audio", audio);
+  const cue = createMediaReadyCue()!;
+  cue.selectLevel("reply");
+  cue.selectLevel("normal");
+  cue.selectLevel("reply");
+  expect(audio).toHaveBeenCalledOnce();
+  expect(blobs).toHaveLength(2);
+  expect(cue.audio.src).toBe("blob:cue-2");
+  const view = new DataView(await blobs[1]!.arrayBuffer());
+  const frequency = (from: number, to: number) => {
+    let crossings = 0;
+    for (let frame = Math.round(from * 16000) + 1; frame < Math.round(to * 16000); frame++) {
+      if (view.getInt16(44 + (frame - 1) * 2, true) <= 0 && view.getInt16(44 + frame * 2, true) > 0) crossings++;
+    }
+    return crossings / (to - from);
+  };
+  expect(Math.abs(frequency(0.01, 0.20) - 659)).toBeLessThan(6);
+  expect(Math.abs(frequency(0.29, 0.49) - 523)).toBeLessThan(6);
+  let peak = 0;
+  for (let i = 44; i < view.byteLength; i += 2) peak = Math.max(peak, Math.abs(view.getInt16(i, true)));
+  expect(peak / 32767).toBeLessThanOrEqual(READY_CUE_GAIN);
+  cue.dispose();
+  cue.dispose();
+  expect(revokeObjectURL.mock.calls).toEqual([["blob:cue-1"], ["blob:cue-2"]]);
 });
 
 it("creates and disposes a local WAV media element without Web Audio", () => {

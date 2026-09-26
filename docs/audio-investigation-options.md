@@ -220,3 +220,12 @@ The user subsequently judged the behavior good enough and requested two finishin
 - Regression tests verify silent opening, the recording-to-reply flow, sample-by-sample tap attenuation, preserved full-level finish/reply source, no redundant post-speech source reload, and exact-once cleanup. Microphone logic and audio-session policy are unchanged.
 
 Further volume experiments are closed at the user's request. This is a practical accepted outcome with a modest final level adjustment, not a claim that the underlying iOS behavior has been fully explained.
+
+### Final cue preferences
+
+After calling the result great, the user requested a slightly louder initial tone and a distinct final “finished speaking” tone. This was explicitly interpreted in the response as the cue after the assistant's spoken reply.
+
+- Tap PCM scale increases from `0.75` to `0.85` (peak gain `0.119`, about +1.1 dB relative to the preceding version). It remains below the original full-level tap gain.
+- Reply-complete/ready now uses a falling 659 → 523 Hz pair, instead of the rising 523 → 659 Hz pair used at recording-start and finish-dictating. Post-reply gain stays `0.14`; waveform duration/envelope and the finish-dictating cue are unchanged.
+- The same media element is retained, with at most three cached WAV URLs. A distinct reply sound necessarily selects different PCM from the finish cue; identical pre/post source reuse is no longer claimed. No new audio player or session override is introduced.
+- Opening an idle thread stays silent. Microphone behavior, speech-completion guards, thinking audio, and playback timing are unchanged. Tests cover the tap PCM scale, descending frequency order and unboosted peak, source caching/disposal, and the streamed/device reply paths. All 50 tests and typecheck pass in the working checkout.

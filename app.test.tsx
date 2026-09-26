@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 it.each(["stream", "device"] as const)("reuses the cue player through recording, finish, and a %s reply without breaking capture", async (speechMode) => {
-  const createObjectURL = vi.fn().mockReturnValueOnce("blob:shared-cue").mockReturnValueOnce("blob:tap-cue");
+  const createObjectURL = vi.fn().mockReturnValueOnce("blob:shared-cue").mockReturnValueOnce("blob:tap-cue").mockReturnValueOnce("blob:reply-cue");
   vi.stubGlobal("URL", { createObjectURL, revokeObjectURL: vi.fn() });
   const stopTracks = vi.fn();
   Object.defineProperty(navigator, "mediaDevices", {
@@ -99,8 +99,9 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
     if (speechMode === "stream") player!.onended?.();
     else { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(1000); }
   });
-  expect(cuePlayer.play).toHaveBeenCalledTimes(3); // post-reply: same player/normal source as finish
-  expect(createObjectURL).toHaveBeenCalledTimes(2); // cached normal and quieter tap WAVs
+  expect(cuePlayer.play).toHaveBeenCalledTimes(3); // post-reply: distinct source, same player
+  expect(cuePlayer.src).toBe("blob:reply-cue");
+  expect(createObjectURL).toHaveBeenCalledTimes(3); // cached finish, tap, and reply WAVs
   const pauses = cuePlayer.pause.mock.calls.length;
   if (player) expect(player.pause).not.toHaveBeenCalled();
   await act(async () => { await vi.advanceTimersByTimeAsync(speechMode === "stream" ? 1199 : 1499); });
@@ -185,11 +186,11 @@ it("retains the same local cue player across device replies, Stop, and late spee
   expect(cuePlayer.removeAttribute).not.toHaveBeenCalled();
   expect(cuePlayer.load).not.toHaveBeenCalled();
   expect(players).toHaveLength(1);
-  expect(createObjectURL).toHaveBeenCalledOnce();
+  expect(createObjectURL).toHaveBeenCalledTimes(2); // normal + falling reply; no recording in this scenario
   slot.lifecycle.unmount();
   slot = undefined;
   expect(cuePlayer.removeAttribute).toHaveBeenCalledWith("src");
-  expect(revokeObjectURL).toHaveBeenCalledOnce();
+  expect(revokeObjectURL).toHaveBeenCalledTimes(2);
 });
 
 it.each(["end-sync", "end-queued", "silence-sync", "silence-queued", "active-error", "active-interrupted-error", "unknown-error", "speak-sync-error", "stopped"] as const)(

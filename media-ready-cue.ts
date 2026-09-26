@@ -1,6 +1,6 @@
-// Same local tone throughout; only the tap variant is attenuated.
+// Tap/finish rise; the reply-complete cue falls. All use one media player.
 export const READY_CUE_GAIN = 0.14;
-const TAP_CUE_SCALE = 0.75;
+const TAP_CUE_SCALE = 0.85;
 const NOTE_LENGTH = 0.28;
 const FADE_IN = 0.025;
 const MIN_GAIN = 0.0001;
@@ -16,11 +16,11 @@ export function readyCueEnvelope(localTime: number): number {
 
 export interface MediaReadyCue {
   audio: HTMLAudioElement;
-  selectLevel(level: "normal" | "tap"): void;
+  selectLevel(level: "normal" | "tap" | "reply"): void;
   dispose(): void;
 }
 
-function createCueUrl(peakGain: number): string {
+function createCueUrl(peakGain: number, descending = false): string {
   const sampleRate = 16000;
   const duration = 0.54;
   const frameCount = Math.ceil(sampleRate * duration);
@@ -42,7 +42,8 @@ function createCueUrl(peakGain: number): string {
   text(36, "data");
   view.setUint32(40, frameCount * 2, true);
 
-  const notes: readonly [frequency: number, start: number][] = [[523, 0], [659, 0.23]];
+  const notes: readonly [frequency: number, start: number][] = descending
+    ? [[659, 0], [523, 0.23]] : [[523, 0], [659, 0.23]];
   for (let frame = 0; frame < frameCount; frame += 1) {
     const time = frame / sampleRate;
     let sample = 0;
@@ -63,19 +64,19 @@ export function createMediaReadyCue(peakGain = READY_CUE_GAIN): MediaReadyCue | 
   const url = createCueUrl(peakGain);
   const audio = new Audio(url);
   let tapUrl: string | null = null;
-  let level: "normal" | "tap" = "normal";
+  let replyUrl: string | null = null;
+  let level: "normal" | "tap" | "reply" = "normal";
   let disposed = false;
   return {
     audio,
     selectLevel(next) {
       if (disposed || next === level) return;
       // Scale PCM rather than relying on element.volume support on iOS.
-      // Only two cached sources; never create another media element.
+      // Three bounded, cached variants; never create another media element.
       if (next === "tap") tapUrl ??= createCueUrl(peakGain * TAP_CUE_SCALE);
-      audio.src = next === "tap" ? tapUrl! : url;
+      if (next === "reply") replyUrl ??= createCueUrl(peakGain, true);
+      audio.src = next === "tap" ? tapUrl! : next === "reply" ? replyUrl! : url;
       level = next;
-      // Finish restores the normal source before speech; post-reply selection
-      // is then a no-op, preserving that already-played player AND source.
     },
     dispose() {
       if (disposed) return;
@@ -85,6 +86,7 @@ export function createMediaReadyCue(peakGain = READY_CUE_GAIN): MediaReadyCue | 
       audio.load();
       URL.revokeObjectURL(url);
       if (tapUrl) URL.revokeObjectURL(tapUrl);
+      if (replyUrl) URL.revokeObjectURL(replyUrl);
     },
   };
 }

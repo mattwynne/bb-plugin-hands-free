@@ -92,8 +92,8 @@ function VoicePage({ subPath }: { subPath: string }) {
     const mine = sequence.current;
     const playReadyCue = () => {
       if (mine !== sequence.current || !active.current) return;
-      // The same player and unboosted WAV heard at tap/finish, not a new
-      // post-speech player. Keep it allocated for subsequent replies as well.
+      // Play the distinct local reply chime through the established cue
+      // player, keeping that player allocated for subsequent replies as well.
       void cues.current?.ready().then((played) => {
         if (!played && mine === sequence.current && active.current) {
           setNotice("Ready tone unavailable or blocked by iOS.");
@@ -459,7 +459,7 @@ function VoicePage({ subPath }: { subPath: string }) {
     <main className="h-full min-h-0 overflow-y-auto px-4 py-5" aria-label="Voice Drive">
       <div className="mx-auto max-w-xl space-y-5 pb-12">
         <h1 className="text-2xl font-bold">Voice Drive</h1>
-        <p className="text-sm text-muted-foreground">Tap to dictate; a tone confirms recording has started. The finish tone confirms your words are being sent. Quiet notes play while the agent works. Pull over to review code or approve permissions.</p>
+        <p className="text-sm text-muted-foreground">Tap to dictate; a tone confirms recording has started. The finish tone confirms your words are being sent. A falling chime marks the end of the spoken reply. Quiet notes play while the agent works. Pull over to review code or approve permissions.</p>
         <label className="block text-base font-semibold" htmlFor="voice-drive-thread">Thread</label>
         <select id="voice-drive-thread" className="w-full min-h-14 rounded-xl border bg-background px-3 text-base" value={selectedId} onChange={(event) => navigate.toPluginPanel("drive", { subPath: encodeURIComponent(event.target.value) })}>
           <option value="">Choose a thread</option>

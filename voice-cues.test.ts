@@ -22,7 +22,7 @@ function fakeMedia() {
   return { players, createObjectURL, revokeObjectURL };
 }
 
-it("reuses one player with a quieter tap and a shared finish/post-reply source, including after Stop", async () => {
+it("reuses one player for the tap, finish, and distinct post-reply cues, including after Stop", async () => {
   const { players, createObjectURL, revokeObjectURL } = fakeMedia();
   const audioContext = vi.fn();
   vi.stubGlobal("AudioContext", audioContext);
@@ -44,13 +44,13 @@ it("reuses one player with a quieter tap and a shared finish/post-reply source, 
   expect(revokeObjectURL).not.toHaveBeenCalled();
   expect(await cues.ready()).toBe(true);
   expect(players).toHaveLength(1);
-  expect(createObjectURL).toHaveBeenCalledTimes(2);
-  expect(player.src).toBe("blob:cue-1");
+  expect(createObjectURL).toHaveBeenCalledTimes(3);
+  expect(player.src).toBe("blob:cue-3"); // falling reply cue
   expect(audioContext).not.toHaveBeenCalled(); // Web Audio is reserved for thinking
   cues.dispose();
   cues.dispose();
   expect(player.removeAttribute).toHaveBeenCalledWith("src");
-  expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+  expect(revokeObjectURL).toHaveBeenCalledTimes(3);
   expect(await cues.ready()).toBe(false);
   expect(player.play).toHaveBeenCalledTimes(4);
 });
@@ -63,7 +63,7 @@ it("retains the same player after an autoplay rejection so a later tap can retry
   expect(await cues.ready()).toBe(false);
   expect(await cues.ready()).toBe(true);
   expect(players).toHaveLength(1);
-  expect(createObjectURL).toHaveBeenCalledOnce();
+  expect(createObjectURL).toHaveBeenCalledTimes(2);
   cues.dispose();
 });
 
@@ -77,7 +77,7 @@ it("does not revive a disposed cue when a pending play resolves", async () => {
   cues.dispose();
   resolve();
   expect(await pending).toBe(false);
-  expect(revokeObjectURL).toHaveBeenCalledOnce();
+  expect(revokeObjectURL).toHaveBeenCalledTimes(2);
   expect(players).toHaveLength(1);
 });
 
