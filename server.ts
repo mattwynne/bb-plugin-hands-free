@@ -2,6 +2,18 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 const threadId = z.string().min(1).max(200);
+const diagnosticEvent = z.enum([
+  "view-open", "thread-state", "reply-start", "reply-end", "cue-request",
+  "audio-context", "audio-resume-start", "audio-resume-result",
+  "cue-scheduled", "cue-ended", "cue-unavailable", "manual-test", "playback-cleanup",
+]);
+const diagnosticDetail = z.enum([
+  "loading", "ready", "thinking", "attention", "media-ended", "media-error",
+  "speech-ended", "speech-error", "speech-status", "speech-unavailable",
+  "automatic", "manual", "failed", "succeeded",
+]);
+export type DiagnosticEvent = z.infer<typeof diagnosticEvent>;
+export type DiagnosticDetail = z.infer<typeof diagnosticDetail>;
 export const rpcContract = defineRpcContract({
   latest: {
     input: z.object({ threadId }),
@@ -15,10 +27,32 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadId }),
     output: z.object({ state: z.enum(["ready", "thinking", "attention"]) }),
   },
+  diagnostic: {
+    input: z.object({
+      session: z.string().regex(/^[a-zA-Z0-9-]{8,40}$/),
+      event: diagnosticEvent,
+      detail: diagnosticDetail.optional(),
+      audioState: z.enum(["running", "suspended", "interrupted", "closed", "unavailable", "unknown"]).optional(),
+      elapsedMs: z.number().int().min(0).max(30000).optional(),
+    }),
+    output: z.object({ recorded: z.boolean() }),
+  },
 });
 
 export default function plugin(bb: BbPluginApi) {
+  // Bounded even if a buggy client floods diagnostics. No audio, prompt text,
+  // response text, thread ids, or freeform strings ever enter these logs.
+  let logWindowStart = Date.now();
+  let logCount = 0;
   bb.rpc.register(rpcContract, {
+    diagnostic: async ({ session, event, detail, audioState, elapsedMs }) => {
+      const now = Date.now();
+      if (now - logWindowStart >= 60_000) { logWindowStart = now; logCount = 0; }
+      if (logCount >= 120) return { recorded: false };
+      logCount += 1;
+      bb.log.info(`voice session=${session} event=${event} detail=${detail ?? "-"} audio=${audioState ?? "-"} elapsedMs=${elapsedMs ?? "-"}`);
+      return { recorded: true };
+    },
     latest: async ({ threadId }) => {
       const result = await bb.sdk.threads.output({ threadId });
       return { text: result.output };

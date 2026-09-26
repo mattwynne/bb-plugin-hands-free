@@ -24,6 +24,10 @@ Open **Voice Drive** in the BB sidebar, select a thread, or use the **Voice** bu
 - **Speech is sent as soon as dictation ends**; there is no chance to correct transcription before the agent sees it. Do not dictate passwords, destructive instructions or anything you must inspect first. This does **not** approve tool calls or permission prompts, read every stream update, or make coding tasks safe to supervise while driving. Pull over to inspect changes and approve actions. Sending uses only a fresh turn on an idle thread; a busy thread returns an error rather than steering/queuing silently. It uses the thread's server-side defaults, not temporary model/permission choices or attachments from BB's normal composer.
 - When a selected thread becomes idle, Voice Drive reads its last assistant output, not every streaming update or a full transcript. Identical consecutive outputs are de-duplicated. Answers over 12,000 characters are not silently truncated: open the normal thread to review them. The voice page only lists threads present in BB's current sidebar roster.
 
+## Audio diagnostics
+
+After an iPhone test, inspect recent events with `bb plugin logs voice-drive -n 100` (or `bb plugin logs voice-drive -f` while testing). Entries include a random per-page session id, thread state transitions, reply start/end source, Web Audio context state and resume result, cue scheduling, oscillator completion, and playback cleanup. They **never contain thread ids, speech transcripts, response text, or audio bytes**. Browser reports such as `cue-scheduled` and `cue-ended` prove that nodes ran, **not** that iOS routed audible sound. Logs are rate-limited to 120 events/minute globally and 100 events/page. The on-screen manual vs automatic cue line remains available for a quick comparison.
+
 ## Development
 
 ```sh
@@ -33,4 +37,4 @@ npm test
 npm run build
 ```
 
-`server.ts` exposes three schema-validated RPC calls (latest output, thread state, and send), and publishes active/idle/failure/interaction notifications without broadcasting message text. `app.tsx` owns speech state in the page and releases the microphone and audio on thread change/unmount. There is no server-side transcript storage. The Read Aloud HTTP integration uses its `/prepare` and `/stream` routes; if those private routes change, device speech is the fallback.
+`server.ts` exposes four schema-validated RPC calls (latest output, thread state, send, and bounded diagnostics), and publishes active/idle/failure/interaction notifications without broadcasting message text. `app.tsx` owns speech state in the page and releases the microphone and audio on thread change/unmount. There is no server-side transcript storage. The Read Aloud HTTP integration uses its `/prepare` and `/stream` routes; if those private routes change, device speech is the fallback.

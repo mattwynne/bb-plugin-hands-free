@@ -4,6 +4,8 @@ export interface CueDiagnostic {
   scheduled: boolean;
   audioState: string;
 }
+export type CueLogEvent = "audio-context" | "audio-resume-start" | "audio-resume-result" | "cue-ended";
+export type CueLog = (event: CueLogEvent, audioState: string, elapsedMs?: number) => void;
 export interface VoiceCues {
   unlock(): void;
   ready(): Promise<CueDiagnostic>;
@@ -13,7 +15,7 @@ export interface VoiceCues {
   dispose(): void;
 }
 
-export function createVoiceCues(): VoiceCues {
+export function createVoiceCues(report?: CueLog): VoiceCues {
   let context: AudioContext | null = null;
   let loop: ReturnType<typeof setInterval> | null = null;
   let firstPulse: ReturnType<typeof setTimeout> | null = null;
@@ -27,7 +29,15 @@ export function createVoiceCues(): VoiceCues {
     if (!BrowserAudioContext) return null;
     try {
       if (context?.state === "closed") context = null;
-      return context ?? (context = new BrowserAudioContext());
+      if (!context) {
+        const created = new BrowserAudioContext();
+        context = created;
+        report?.("audio-context", created.state);
+        created.addEventListener?.("statechange", () => {
+          if (!disposed) report?.("audio-context", created.state);
+        });
+      }
+      return context;
     } catch { return null; }
   };
   const activate = async (): Promise<AudioContext | null> => {
@@ -37,17 +47,23 @@ export function createVoiceCues(): VoiceCues {
     // speech relinquishes its audio session. It needs resume() as well.
     if (ctx.state !== "running") {
       let timeout: ReturnType<typeof setTimeout> | null = null;
+      const started = performance.now();
+      report?.("audio-resume-start", ctx.state);
       try {
         // A WebKit interruption can leave resume() pending indefinitely.
         await Promise.race([ctx.resume(), new Promise<void>((resolve) => {
           timeout = setTimeout(resolve, 900);
         })]);
-      } catch { return null; }
+      } catch {
+        report?.("audio-resume-result", ctx.state, Math.round(performance.now() - started));
+        return null;
+      }
       finally { if (timeout !== null) clearTimeout(timeout); }
+      report?.("audio-resume-result", ctx.state, Math.round(performance.now() - started));
     }
     return ctx.state === "running" ? ctx : null;
   };
-  const tone = (ctx: AudioContext, hz: number, at: number, length: number, volume: number, waveform: OscillatorType = "sine") => {
+  const tone = (ctx: AudioContext, hz: number, at: number, length: number, volume: number, waveform: OscillatorType = "sine", onEnd?: () => void) => {
     const oscillator = ctx.createOscillator();
     const gain = ctx.createGain();
     oscillator.type = waveform;
@@ -59,7 +75,7 @@ export function createVoiceCues(): VoiceCues {
     gain.connect(ctx.destination);
     oscillator.start(at);
     oscillator.stop(at + length + 0.01);
-    oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
+    oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); onEnd?.(); };
   };
   const cue = async (notes: readonly [number, number][], volume: number, onlyThinking = false, length = 0.16, waveform: OscillatorType = "sine"): Promise<CueDiagnostic> => {
     const ctx = await activate();
@@ -68,7 +84,11 @@ export function createVoiceCues(): VoiceCues {
     }
     try {
       const now = ctx.currentTime + 0.01;
-      for (const [hz, delay] of notes) tone(ctx, hz, now + delay, length, volume, waveform);
+      for (const [index, [hz, delay]] of notes.entries()) {
+        tone(ctx, hz, now + delay, length, volume, waveform,
+          waveform === "triangle" && index === notes.length - 1
+            ? () => report?.("cue-ended", ctx.state) : undefined);
+      }
       // Scheduled does not mean audible: iOS may still mute the output route.
       return { scheduled: true, audioState: ctx.state };
     } catch { return { scheduled: false, audioState: ctx.state }; }

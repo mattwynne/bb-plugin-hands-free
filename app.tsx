@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { definePluginApp, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
-import type { rpcContract } from "./server";
+import type { rpcContract, DiagnosticEvent, DiagnosticDetail } from "./server";
 import { createVoiceCues, type VoiceCues } from "./voice-cues";
 
 // Web Speech is not part of every iOS WebView. Keep the keyboard-dictation
@@ -38,6 +38,21 @@ function VoicePage({ subPath }: { subPath: string }) {
   const [phase, setPhase] = useState<"loading" | "ready" | "thinking" | "attention">("loading");
   const [notice, setNotice] = useState("");
   const [cueDiagnostic, setCueDiagnostic] = useState<string | null>(null);
+  const logSession = useRef(globalThis.crypto?.randomUUID?.() ?? `v${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`);
+  const logCount = useRef(0);
+  const logDiagnostic = useCallback((event: DiagnosticEvent, detail?: DiagnosticDetail, audioState?: string, elapsedMs?: number) => {
+    if (logCount.current >= 100) return;
+    logCount.current += 1;
+    const state = ["running", "suspended", "interrupted", "closed", "unavailable"].includes(audioState ?? "")
+      ? audioState as "running" | "suspended" | "interrupted" | "closed" | "unavailable" : "unknown" as const;
+    void rpc.call("diagnostic", {
+      session: logSession.current, event, ...(detail ? { detail } : {}),
+      ...(audioState ? { audioState: state } : {}),
+      ...(elapsedMs !== undefined ? { elapsedMs: Math.min(30000, Math.max(0, Math.round(elapsedMs))) } : {}),
+    }).catch(() => { /* Diagnostics must never block speech. */ });
+  }, [rpc]);
+  const report = useRef(logDiagnostic);
+  report.current = logDiagnostic;
   const recognition = useRef<Recognition | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const recordingStream = useRef<MediaStream | null>(null);
@@ -56,11 +71,15 @@ function VoicePage({ subPath }: { subPath: string }) {
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
   useEffect(() => {
-    cues.current = createVoiceCues();
+    cues.current = createVoiceCues((event, audioState, elapsedMs) => {
+      report.current(event, undefined, audioState, elapsedMs);
+    });
+    report.current("view-open");
     return () => { cues.current?.dispose(); cues.current = null; };
   }, []);
   const transition = useCallback((next: typeof phase) => {
     phaseToken.current += 1;
+    if (phaseRef.current !== next) report.current("thread-state", next);
     phaseRef.current = next;
     setPhase(next);
     if (next === "thinking") cues.current?.startThinking();
@@ -69,6 +88,9 @@ function VoicePage({ subPath }: { subPath: string }) {
   }, []);
 
   const stopAudio = useCallback(() => {
+    if (audio.current || playbackCleanupTimer.current !== null || speechMonitor.current !== null) {
+      report.current("playback-cleanup");
+    }
     sequence.current += 1;
     if (playbackCleanupTimer.current !== null) clearTimeout(playbackCleanupTimer.current);
     if (speechMonitor.current !== null) clearInterval(speechMonitor.current);
@@ -84,19 +106,25 @@ function VoicePage({ subPath }: { subPath: string }) {
     setSpeaking(false);
   }, []);
 
-  const finishPlayback = useCallback((source: string) => {
+  const finishPlayback = useCallback((source: DiagnosticDetail) => {
     if (!active.current || phaseRef.current !== "ready") { stopAudio(); return; }
     if (playbackCleanupTimer.current !== null) return;
+    report.current("reply-end", source);
+    report.current("cue-request", "automatic");
     // Start before tearing down the speech session. Keep it alive through the
     // longer diagnostic cue and any iOS AudioContext.resume() attempt.
     const mine = sequence.current;
     const cue = cues.current;
     if (cue) void cue.ready().then((result) => {
       if (mine === sequence.current && active.current) {
+        report.current(result.scheduled ? "cue-scheduled" : "cue-unavailable", "automatic", result.audioState);
         setCueDiagnostic(`Automatic (${source}): ${result.scheduled ? "scheduled" : "not scheduled"}; Web Audio ${result.audioState}`);
       }
     });
-    else setCueDiagnostic(`Automatic (${source}): Web Audio unavailable`);
+    else {
+      report.current("cue-unavailable", "automatic", "unavailable");
+      setCueDiagnostic(`Automatic (${source}): Web Audio unavailable`);
+    }
     playbackCleanupTimer.current = setTimeout(() => {
       playbackCleanupTimer.current = null;
       if (mine === sequence.current) stopAudio();
@@ -124,6 +152,7 @@ function VoicePage({ subPath }: { subPath: string }) {
     }
     stopAudio();
     const mine = sequence.current;
+    report.current("reply-start", "automatic");
     setSpeaking(true);
     setNotice("Preparing audio…");
     try {
@@ -442,10 +471,15 @@ function VoicePage({ subPath }: { subPath: string }) {
         </div>}
         {speaking && <button type="button" onClick={stopAudio} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold">■ Stop audio</button>}
         <button type="button" disabled={!selected || phase !== "ready" || speaking || listening} onClick={() => {
+          report.current("manual-test", "manual");
+          report.current("cue-request", "manual");
           const cue = cues.current;
           if (!cue) return;
           void cue.ready().then((result) => {
-            if (active.current) setCueDiagnostic(`Manual tap: ${result.scheduled ? "scheduled" : "not scheduled"}; Web Audio ${result.audioState}`);
+            if (active.current) {
+              report.current(result.scheduled ? "cue-scheduled" : "cue-unavailable", "manual", result.audioState);
+              setCueDiagnostic(`Manual tap: ${result.scheduled ? "scheduled" : "not scheduled"}; Web Audio ${result.audioState}`);
+            }
           });
         }} className="min-h-12 w-full rounded-xl border px-3 text-sm disabled:opacity-40">Test ready tone (diagnostic)</button>
         {cueDiagnostic && <p role="status" className="text-xs text-muted-foreground">{cueDiagnostic}</p>}
