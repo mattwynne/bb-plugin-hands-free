@@ -22,6 +22,17 @@ function recognitionConstructor(): RecognitionConstructor | undefined {
 
 const READ_ALOUD = "/api/v1/plugins/read-aloud/http";
 const MAX_SPEAK = 12000;
+type AudioSessionResult = "succeeded" | "failed" | "unavailable";
+function requestPlaybackAudioSession(): AudioSessionResult {
+  const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+  if (!session) return "unavailable";
+  try {
+    // Safari exposes this control so a page can recover from the spoken-audio
+    // session selected by speechSynthesis. Other browsers simply lack it.
+    session.type = "playback";
+    return "succeeded";
+  } catch { return "failed"; }
+}
 function VoicePage({ subPath }: { subPath: string }) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
@@ -110,21 +121,30 @@ function VoicePage({ subPath }: { subPath: string }) {
     if (!active.current || phaseRef.current !== "ready") { stopAudio(); return; }
     if (playbackCleanupTimer.current !== null) return;
     report.current("reply-end", source);
-    report.current("cue-request", "automatic");
-    // Start before tearing down the speech session. Keep it alive through the
-    // longer diagnostic cue and any iOS AudioContext.resume() attempt.
+    const speechCompletion = source === "speech-ended" || source === "speech-error" || source === "speech-status";
+    if (speechCompletion) window.speechSynthesis?.cancel();
+    const sessionResult = requestPlaybackAudioSession();
+    report.current("audio-session", sessionResult === "unavailable" ? undefined : sessionResult,
+      sessionResult === "unavailable" ? "unavailable" : undefined);
     const mine = sequence.current;
-    const cue = cues.current;
-    if (cue) void cue.ready().then((result) => {
-      if (mine === sequence.current && active.current) {
-        report.current(result.scheduled ? "cue-scheduled" : "cue-unavailable", "automatic", result.audioState);
-        setCueDiagnostic(`Automatic (${source}): ${result.scheduled ? "scheduled" : "not scheduled"}; Web Audio ${result.audioState}`);
+    // Let WebKit relinquish its spoken-audio session after the utterance callback
+    // before scheduling Web Audio under the explicitly requested playback type.
+    const requestCue = () => {
+      if (mine !== sequence.current || !active.current) return;
+      report.current("cue-request", "automatic");
+      const cue = cues.current;
+      if (cue) void cue.ready().then((result) => {
+        if (mine === sequence.current && active.current) {
+          report.current(result.scheduled ? "cue-scheduled" : "cue-unavailable", "automatic", result.audioState);
+          setCueDiagnostic(`Automatic (${source}): ${result.scheduled ? "scheduled" : "not scheduled"}; Web Audio ${result.audioState}; playback session ${sessionResult}`);
+        }
+      });
+      else {
+        report.current("cue-unavailable", "automatic", "unavailable");
+        setCueDiagnostic(`Automatic (${source}): Web Audio unavailable; playback session ${sessionResult}`);
       }
-    });
-    else {
-      report.current("cue-unavailable", "automatic", "unavailable");
-      setCueDiagnostic(`Automatic (${source}): Web Audio unavailable`);
-    }
+    };
+    window.setTimeout(requestCue, speechCompletion ? 200 : 0);
     playbackCleanupTimer.current = setTimeout(() => {
       playbackCleanupTimer.current = null;
       if (mine === sequence.current) stopAudio();
@@ -472,29 +492,19 @@ function VoicePage({ subPath }: { subPath: string }) {
         {speaking && <button type="button" onClick={stopAudio} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold">■ Stop audio</button>}
         <button type="button" disabled={!selected || phase !== "ready" || speaking || listening} onClick={() => {
           report.current("manual-test", "manual");
+          const sessionResult = requestPlaybackAudioSession();
+          report.current("audio-session", sessionResult === "unavailable" ? undefined : sessionResult,
+            sessionResult === "unavailable" ? "unavailable" : undefined);
           report.current("cue-request", "manual");
           const cue = cues.current;
           if (!cue) return;
           void cue.ready().then((result) => {
             if (active.current) {
               report.current(result.scheduled ? "cue-scheduled" : "cue-unavailable", "manual", result.audioState);
-              setCueDiagnostic(`Manual tap: ${result.scheduled ? "scheduled" : "not scheduled"}; Web Audio ${result.audioState}`);
+              setCueDiagnostic(`Manual tap: ${result.scheduled ? "scheduled" : "not scheduled"}; Web Audio ${result.audioState}; playback session ${sessionResult}`);
             }
           });
         }} className="min-h-12 w-full rounded-xl border px-3 text-sm disabled:opacity-40">Test ready tone (diagnostic)</button>
-        <button type="button" disabled={!selected || phase !== "ready" || speaking || listening} onClick={() => {
-          const cue = cues.current;
-          if (!cue) return;
-          cue.reset();
-          report.current("manual-test", "manual");
-          report.current("cue-request", "manual");
-          void cue.ready().then((result) => {
-            if (active.current) {
-              report.current(result.scheduled ? "cue-scheduled" : "cue-unavailable", "manual", result.audioState);
-              setCueDiagnostic(`Manual after reset: ${result.scheduled ? "scheduled" : "not scheduled"}; Web Audio ${result.audioState}`);
-            }
-          });
-        }} className="min-h-12 w-full rounded-xl border px-3 text-sm disabled:opacity-40">Reset audio & test tone (diagnostic)</button>
         {cueDiagnostic && <p role="status" className="text-xs text-muted-foreground">{cueDiagnostic}</p>}
         {notice && <p role="status" aria-live="polite" className="rounded-xl border p-3 text-sm">{notice}</p>}
         <p className="text-xs text-muted-foreground">Keep BB open and unlocked. iOS may pause audio or the microphone when the app is backgrounded. Read Aloud is optional; device speech is used if its service is unavailable. This is not CarPlay.</p>
