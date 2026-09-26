@@ -3,6 +3,20 @@ import { READY_CUE_GAIN } from "./voice-cues";
 // Local PCM WAV used only after device speech. iOS attenuates this media route
 // even after a delay, so compensate here without changing the loud pre-speech cue.
 export const POST_SPEECH_MEDIA_GAIN = READY_CUE_GAIN * 3;
+const NOTE_LENGTH = 0.28;
+const FADE_IN = 0.025;
+const MIN_GAIN = 0.0001;
+
+// Match voice-cues.ts: exponential attack to READY_CUE_GAIN followed by an
+// exponential decay to MIN_GAIN. Compensation scales this canonical shape.
+export function readyCueEnvelope(localTime: number): number {
+  if (localTime < 0 || localTime >= NOTE_LENGTH) return 0;
+  if (localTime <= FADE_IN) {
+    return MIN_GAIN * ((READY_CUE_GAIN / MIN_GAIN) ** (localTime / FADE_IN));
+  }
+  return READY_CUE_GAIN * ((MIN_GAIN / READY_CUE_GAIN) ** ((localTime - FADE_IN) / (NOTE_LENGTH - FADE_IN)));
+}
+
 export interface MediaReadyCue {
   audio: HTMLAudioElement;
   dispose(): void;
@@ -32,16 +46,14 @@ export function createMediaReadyCue(): MediaReadyCue | null {
   view.setUint32(40, frameCount * 2, true);
 
   const notes: readonly [frequency: number, start: number][] = [[523, 0], [659, 0.23]];
-  const noteLength = 0.28;
-  const fade = 0.025;
   for (let frame = 0; frame < frameCount; frame += 1) {
     const time = frame / sampleRate;
     let sample = 0;
     for (const [frequency, start] of notes) {
       const local = time - start;
-      if (local < 0 || local >= noteLength) continue;
-      const envelope = Math.min(1, local / fade, (noteLength - local) / fade);
-      sample += Math.sin(2 * Math.PI * frequency * local) * envelope * POST_SPEECH_MEDIA_GAIN;
+      if (local < 0 || local >= NOTE_LENGTH) continue;
+      const gain = readyCueEnvelope(local) * (POST_SPEECH_MEDIA_GAIN / READY_CUE_GAIN);
+      sample += Math.sin(2 * Math.PI * frequency * local) * gain;
     }
     view.setInt16(44 + frame * 2, Math.round(Math.max(-1, Math.min(1, sample)) * 0x7fff), true);
   }
