@@ -11,6 +11,9 @@ describe("voice-drive", () => {
     expect(output).toHaveBeenCalledWith({ threadId: "th_1" });
     await harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "th_1" }), lastAssistantText: "Private answer" });
     expect(harness.realtimeSignals).toContainEqual({ channel: "voice-drive/thread-idle", payload: { threadId: "th_1" } });
+    const signals = harness.realtimeSignals.length;
+    await harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "th_1" }), lastAssistantText: null });
+    expect(harness.realtimeSignals).toHaveLength(signals);
     await harness.lifecycle.dispose();
   });
 

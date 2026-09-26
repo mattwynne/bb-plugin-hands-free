@@ -28,12 +28,12 @@ function VoicePage({ subPath }: { subPath: string }) {
   let selectedId = "";
   try { selectedId = decodeURIComponent(subPath.split("/")[0] ?? ""); } catch { /* Invalid URL: leave selection empty. */ }
   const selected = threads.find((thread) => thread.id === selectedId);
-  const [draft, setDraft] = useState("");
-  const [latest, setLatest] = useState<string | null>(null);
+  const [fallbackText, setFallbackText] = useState("");
+  const [showFallback, setShowFallback] = useState(false);
+  const [retryText, setRetryText] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
   const [busy, setBusy] = useState(false);
   const [speaking, setSpeaking] = useState(false);
-  const [autoRead, setAutoRead] = useState(false);
   const [notice, setNotice] = useState("");
   const recognition = useRef<Recognition | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
@@ -42,10 +42,9 @@ function VoicePage({ subPath }: { subPath: string }) {
   const audio = useRef<HTMLAudioElement | null>(null);
   const sequence = useRef(0);
   const captureGeneration = useRef(0);
-  const baseDraft = useRef("");
-  const speakingRef = useRef(false);
-  const autoReadRef = useRef(false);
-  autoReadRef.current = autoRead;
+  const sending = useRef(false);
+  const active = useRef(false);
+  const lastSpoken = useRef<string | null>(null);
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
 
@@ -58,7 +57,6 @@ function VoicePage({ subPath }: { subPath: string }) {
       audio.current = null;
     }
     window.speechSynthesis?.cancel();
-    speakingRef.current = false;
     setSpeaking(false);
   }, []);
 
@@ -70,7 +68,6 @@ function VoicePage({ subPath }: { subPath: string }) {
     }
     stopAudio();
     const mine = sequence.current;
-    speakingRef.current = true;
     setSpeaking(true);
     setNotice("Preparing audio…");
     try {
@@ -88,11 +85,17 @@ function VoicePage({ subPath }: { subPath: string }) {
       const player = new Audio(`${READ_ALOUD}/stream?id=${encodeURIComponent(data.id)}`);
       audio.current = player;
       player.onended = () => { if (mine === sequence.current) stopAudio(); };
-      player.onerror = () => { if (mine === sequence.current) { stopAudio(); setNotice("Audio interrupted. Tap Read reply to try again."); } };
+      player.onerror = () => { if (mine === sequence.current) { stopAudio(); setNotice("Audio interrupted. Open the thread to read this reply."); } };
       await player.play();
       if (mine === sequence.current) setNotice("Reading aloud. Tap Stop audio at any time.");
     } catch {
       if (mine !== sequence.current) return;
+      if (audio.current) {
+        audio.current.pause();
+        audio.current.removeAttribute("src");
+        audio.current.load();
+        audio.current = null;
+      }
       // No network/service or audio autoplay denied: browser TTS may work in a
       // WebView, but is also optional. Do not claim success if neither does.
       if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
@@ -119,12 +122,15 @@ function VoicePage({ subPath }: { subPath: string }) {
     if (recordingTimer.current) clearTimeout(recordingTimer.current);
     setListening(false);
     setBusy(false);
-    setDraft("");
-    setLatest(null);
-    setAutoRead(false);
-    setNotice("");
+    setFallbackText("");
+    setShowFallback(false);
+    setRetryText(null);
+    lastSpoken.current = null;
+    active.current = true;
+    setNotice("Tap to talk. Your words will be sent when you finish.");
     stopAudio();
     return () => {
+      active.current = false;
       captureGeneration.current += 1;
       recognition.current?.abort(); recognition.current = null;
       if (recorder.current?.state === "recording") { recorder.current.onstop = null; recorder.current.stop(); }
@@ -134,59 +140,92 @@ function VoicePage({ subPath }: { subPath: string }) {
     };
   }, [selectedId, stopAudio]);
 
-  const refresh = useCallback(async (read = false) => {
-    if (!selectedId) return;
+  const readNewReply = useCallback(async (threadId: string) => {
     try {
-      const result = await rpc.call("latest", { threadId: selectedId });
-      if (selectedRef.current !== selectedId) return;
-      setLatest(result.text);
-      if (read && result.text) await speak(result.text);
+      const result = await rpc.call("latest", { threadId });
+      if (!active.current || selectedRef.current !== threadId || !result.text) return;
+      if (lastSpoken.current === result.text) return; // repeated idle signal, not a new answer
+      lastSpoken.current = result.text;
+      await speak(result.text);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Could not load reply.");
+      if (active.current && selectedRef.current === threadId) {
+        setNotice(error instanceof Error ? `Could not read reply: ${error.message}` : "Could not read reply.");
+      }
     }
-  }, [rpc, selectedId, speak]);
-  useEffect(() => { void refresh(); }, [refresh]);
+  }, [rpc, speak]);
   useRealtime("voice-drive/thread-idle", (payload) => {
     if (!payload || typeof payload !== "object" || !("threadId" in payload)) return;
-    if (payload.threadId !== selectedRef.current) return;
-    void refresh(autoReadRef.current);
+    if (typeof payload.threadId !== "string" || payload.threadId !== selectedRef.current) return;
+    void readNewReply(payload.threadId);
   });
+
+  const sendText = async (text: string, threadId: string) => {
+    const message = text.trim();
+    if (!message || message.length > 12000 || !active.current || selectedRef.current !== threadId || sending.current) {
+      if (message.length > 12000) setNotice("Dictation is too long to send. Try a shorter message.");
+      return;
+    }
+    sending.current = true;
+    setBusy(true);
+    setRetryText(null);
+    setNotice("Sending your words…");
+    try {
+      await rpc.call("send", { threadId, text: message });
+      if (active.current && selectedRef.current === threadId) setNotice("Sent. Waiting for the agent's reply…");
+    } catch (error) {
+      if (active.current && selectedRef.current === threadId) {
+        setRetryText(message);
+        setNotice(error instanceof Error ? `Not sent: ${error.message}` : "Not sent. Try again.");
+      }
+    } finally {
+      sending.current = false;
+      if (active.current && selectedRef.current === threadId) setBusy(false);
+    }
+  };
 
   const startBrowserRecognition = () => {
     const Constructor = recognitionConstructor();
     if (!Constructor) {
-      setNotice("This iPhone view does not expose speech recognition. Tap the text box and use the iPhone keyboard microphone instead.");
-      document.getElementById("voice-drive-draft")?.focus();
+      setShowFallback(true);
+      setNotice("Microphone unavailable. Use the iPhone keyboard microphone below, then tap Send.");
+      window.setTimeout(() => document.getElementById("voice-drive-fallback")?.focus(), 0);
       return;
     }
     stopAudio();
     const instance = new Constructor();
     recognition.current = instance;
-    baseDraft.current = draft.trim();
+    const owner = selectedId;
+    let recognized = "";
+    let failed = false;
     instance.lang = navigator.language || "en-US";
     instance.interimResults = true;
     instance.continuous = false;
     instance.onresult = (event) => {
-      const parts: string[] = [];
-      for (let index = 0; index < event.results.length; index += 1) {
-        parts.push(event.results[index]?.[0]?.transcript ?? "");
-      }
-      setDraft([baseDraft.current, parts.join(" ").trim()].filter(Boolean).join(" "));
+      recognized = Array.from(event.results)
+        .filter((result) => result.isFinal)
+        .map((result) => result[0]?.transcript ?? "")
+        .join(" ").trim();
     };
     instance.onerror = (event) => {
-      setNotice(`Microphone unavailable (${event.error}). You can use the iPhone keyboard microphone in the text box.`);
+      failed = true;
+      setShowFallback(true);
+      setNotice(`Microphone unavailable (${event.error}). Use the iPhone keyboard microphone below.`);
     };
     instance.onend = () => {
-      if (recognition.current === instance) recognition.current = null;
+      if (recognition.current !== instance) return; // cancelled or changed thread
+      recognition.current = null;
       setListening(false);
+      if (!failed && recognized) void sendText(recognized, owner);
+      else if (!failed) setNotice("No words heard. Tap to talk and try again.");
     };
     try {
       instance.start(); // Synchronous tap gesture, required by iOS permissions.
       setListening(true);
-      setNotice("Listening. Tap the button again to finish, then review your words.");
+      setNotice("Listening. Tap Finish dictating to send your words.");
     } catch {
       recognition.current = null;
-      setNotice("Could not start the microphone. Use the iPhone keyboard microphone in the text box.");
+      setShowFallback(true);
+      setNotice("Could not start the microphone. Use the iPhone keyboard microphone below.");
     }
   };
   const startListening = async () => {
@@ -204,13 +243,15 @@ function VoicePage({ subPath }: { subPath: string }) {
       const mimeType = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find((type) => MediaRecorder.isTypeSupported(type));
       const instance = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       const chunks: BlobPart[] = [];
+      let recordingFailed = false;
       recorder.current = instance;
       recordingStream.current = stream;
-      baseDraft.current = draft.trim();
       instance.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
       instance.onerror = () => {
+        recordingFailed = true;
         if (instance.state === "recording") instance.stop();
-        setNotice("Recording failed. Use the iPhone keyboard microphone instead.");
+        setShowFallback(true);
+        setNotice("Recording failed. Use the iPhone keyboard microphone below.");
       };
       instance.onstop = async () => {
         stream.getTracks().forEach((track) => track.stop());
@@ -218,7 +259,7 @@ function VoicePage({ subPath }: { subPath: string }) {
         recordingStream.current = null;
         recorder.current = null;
         setListening(false);
-        if (capture !== captureGeneration.current || selectedRef.current !== owner) return;
+        if (capture !== captureGeneration.current || selectedRef.current !== owner || recordingFailed) return;
         const blob = new Blob(chunks, { type: instance.mimeType || "audio/mp4" });
         if (!blob.size) { setNotice("No audio was recorded. Try again."); return; }
         setBusy(true);
@@ -231,11 +272,14 @@ function VoicePage({ subPath }: { subPath: string }) {
           const data: unknown = await response.json();
           if (!data || typeof data !== "object" || !("text" in data) || typeof data.text !== "string") throw new Error("Invalid transcription response");
           if (capture !== captureGeneration.current || selectedRef.current !== owner) return;
-          setDraft([baseDraft.current, data.text.trim()].filter(Boolean).join(" "));
-          setNotice("Review the transcript, then tap Send this reply.");
+          if (!data.text.trim()) { setNotice("No words heard. Tap to talk and try again."); return; }
+          await sendText(data.text, owner);
         } catch (error) {
-          setNotice(`${error instanceof Error ? error.message : "Transcription unavailable"}. Use the iPhone keyboard microphone instead. Check BB voice transcription settings.`);
-        } finally { setBusy(false); }
+          if (capture === captureGeneration.current && active.current) {
+            setShowFallback(true);
+            setNotice(`${error instanceof Error ? error.message : "Transcription unavailable"}. Use the iPhone keyboard microphone below. Check BB voice transcription settings.`);
+          }
+        } finally { if (capture === captureGeneration.current && active.current) setBusy(false); }
       };
       instance.start();
       setBusy(false);
@@ -246,8 +290,8 @@ function VoicePage({ subPath }: { subPath: string }) {
       if (capture === captureGeneration.current) {
         recordingStream.current?.getTracks().forEach((track) => track.stop());
         recordingStream.current = null;
-        setNotice("Microphone permission or recording unavailable. Try the iPhone keyboard microphone.");
-        document.getElementById("voice-drive-draft")?.focus();
+        setShowFallback(true);
+        setNotice("Microphone permission or recording unavailable. Use the iPhone keyboard microphone below.");
       }
     } finally { if (capture === captureGeneration.current && !recorder.current) setBusy(false); }
   };
@@ -256,23 +300,11 @@ function VoicePage({ subPath }: { subPath: string }) {
     else recognition.current?.stop();
     setListening(false);
   };
-  const send = async () => {
-    if (busy || listening || !selectedId || !draft.trim()) return;
-    setBusy(true);
-    try {
-      await rpc.call("send", { threadId: selectedId, text: draft.trim() });
-      setDraft("");
-      setNotice("Sent. Waiting for the agent; tap Read reply when it finishes.");
-    } catch (error) {
-      setNotice(error instanceof Error ? `Not sent: ${error.message}` : "Not sent. Try again.");
-    } finally { setBusy(false); }
-  };
-
   return (
     <main className="h-full min-h-0 overflow-y-auto px-4 py-5" aria-label="Voice Drive">
       <div className="mx-auto max-w-xl space-y-5 pb-12">
         <h1 className="text-2xl font-bold">Voice Drive</h1>
-        <p className="text-sm text-muted-foreground">One tap to dictate. Review before sending. Never use this to approve permissions or review code while driving.</p>
+        <p className="text-sm text-muted-foreground">Tap to start; tap again to send. New agent replies play automatically while this page is open. Pull over to review code or approve permissions.</p>
         <label className="block text-base font-semibold" htmlFor="voice-drive-thread">Thread</label>
         <select id="voice-drive-thread" className="w-full min-h-14 rounded-xl border bg-background px-3 text-base" value={selectedId} onChange={(event) => navigate.toPluginPanel("drive", { subPath: encodeURIComponent(event.target.value) })}>
           <option value="">Choose a thread</option>
@@ -285,21 +317,17 @@ function VoicePage({ subPath }: { subPath: string }) {
           aria-pressed={listening} aria-label={listening ? "Finish dictating" : "Start dictating"}>
           {listening ? "■  Finish dictating" : "🎙  Tap to talk"}
         </button>
-        <label htmlFor="voice-drive-draft" className="block text-base font-semibold">Your reply — review before sending</label>
-        <textarea id="voice-drive-draft" rows={5} maxLength={12000} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Dictate, or tap here and use the iPhone keyboard microphone" className="w-full rounded-xl border bg-background p-4 text-lg" />
-        <div className="grid grid-cols-2 gap-3">
-          <button type="button" disabled={!draft.trim()} onClick={() => void speak(draft)} className="min-h-16 rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">Read my words</button>
-          <button type="button" disabled={!selected || !draft.trim() || busy || listening} onClick={() => void send()} className="min-h-16 rounded-xl bg-primary px-3 text-lg font-bold text-primary-foreground disabled:opacity-40">{busy ? "Sending…" : "Send this reply"}</button>
-        </div>
-        <section className="space-y-3 rounded-xl border p-4" aria-label="Latest agent reply">
-          <h2 className="text-lg font-bold">Latest agent reply</h2>
-          <p className="max-h-44 overflow-y-auto whitespace-pre-wrap text-sm">{latest || "No reply yet."}</p>
-          <div className="grid grid-cols-2 gap-3">
-            <button type="button" disabled={!selected} onClick={() => void refresh(true)} className="min-h-16 rounded-xl bg-primary px-3 text-lg font-bold text-primary-foreground disabled:opacity-40">▶ Read reply</button>
-            <button type="button" disabled={!speaking} onClick={stopAudio} className="min-h-16 rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">■ Stop audio</button>
-          </div>
-          <label className="flex min-h-12 items-center gap-3 text-sm"><input type="checkbox" checked={autoRead} onChange={(event) => setAutoRead(event.target.checked)} className="size-6" /> Read new replies automatically while this page is open</label>
-        </section>
+        {retryText && <button type="button" disabled={busy} onClick={() => void sendText(retryText, selectedId)} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">Retry sending</button>}
+        {showFallback && <div className="space-y-3 rounded-xl border p-4">
+          <label htmlFor="voice-drive-fallback" className="block font-semibold">Keyboard dictation fallback</label>
+          <textarea id="voice-drive-fallback" rows={3} maxLength={12000} value={fallbackText} onChange={(event) => setFallbackText(event.target.value)} placeholder="Use the iPhone keyboard microphone" className="w-full rounded-xl border bg-background p-4 text-lg" />
+          <button type="button" disabled={!selected || !fallbackText.trim() || busy} onClick={() => {
+            const text = fallbackText;
+            setFallbackText("");
+            void sendText(text, selectedId);
+          }} className="min-h-16 w-full rounded-xl bg-primary px-3 text-lg font-bold text-primary-foreground disabled:opacity-40">Send dictated text</button>
+        </div>}
+        {speaking && <button type="button" onClick={stopAudio} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold">■ Stop audio</button>}
         {notice && <p role="status" aria-live="polite" className="rounded-xl border p-3 text-sm">{notice}</p>}
         <p className="text-xs text-muted-foreground">Keep BB open and unlocked. iOS may pause audio or the microphone when the app is backgrounded. Read Aloud is optional; device speech is used if its service is unavailable. This is not CarPlay.</p>
       </div>

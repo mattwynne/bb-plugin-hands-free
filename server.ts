@@ -26,9 +26,10 @@ export default function plugin(bb: BbPluginApi) {
       return { accepted: true };
     },
   });
-  bb.events.on("thread.idle", ({ thread }) => {
-    // No conversation text on the broadcast; clients opt in and fetch their
-    // own currently selected thread when an idle event arrives.
+  bb.events.on("thread.idle", ({ thread, lastAssistantText }) => {
+    // An idle transition without an assistant answer must not read the old
+    // output again. Never broadcast conversation text to other clients.
+    if (!lastAssistantText?.trim()) return;
     bb.realtime.publish("voice-drive/thread-idle", { threadId: thread.id });
   });
 }
