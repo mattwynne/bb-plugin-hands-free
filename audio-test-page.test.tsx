@@ -12,6 +12,19 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("exposes the fresh-player comparison as a distinct diagnostic variant", () => {
+  vi.stubGlobal("speechSynthesis", { speaking: false, pending: false });
+  vi.stubGlobal("SpeechSynthesisUtterance", undefined);
+  const diagnostic = vi.fn(async (_args: unknown) => ({ recorded: true }));
+  slot = renderSlot(app.navPanels.find((panel) => panel.id === "audio-test")!, { subPath: "" }, {
+    rpc: { audioTestDiagnostic: diagnostic },
+  });
+  fireEvent.click(slot.getByRole("button", { name: "4. Fresh-player speech comparison" }));
+  expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ variant: "speech-fresh", event: "start" }));
+  expect(diagnostic).toHaveBeenLastCalledWith(expect.objectContaining({ variant: "speech-fresh", event: "unavailable" }));
+  expect(slot.getByText("This client cannot run the selected audio test.")).toBeTruthy();
+});
+
 it("runs from its own panel, reports only metadata, and cleans up on navigation", async () => {
   const players: FakeAudio[] = [];
   class FakeAudio {

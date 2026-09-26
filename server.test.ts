@@ -23,6 +23,7 @@ describe("voice-drive", () => {
     const entry = { session: "capture-run-123", variant: "capture", event: "mic-stopped", elapsedMs: 600, sessionType: "auto" };
     expect(await harness.behavior.callRpc("audioTestDiagnostic", entry)).toEqual({ recorded: true });
     expect(JSON.stringify(harness.logEntries)).toContain("variant=capture event=mic-stopped");
+    expect(await harness.behavior.callRpc("audioTestDiagnostic", { ...entry, variant: "speech-fresh", event: "player-recreated" })).toEqual({ recorded: true });
     await expect(harness.behavior.callRpc("audioTestDiagnostic", { ...entry, recording: "private audio" })).rejects.toThrow();
     await harness.lifecycle.dispose();
   });

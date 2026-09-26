@@ -75,6 +75,67 @@ it("reuses identical media before/after fixed device speech without capture, ses
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("can change only player reuse while keeping identical WAV bytes and gain", () => {
+  const events = vi.fn();
+  startAudioComparison("speech-fresh", events);
+  const before = players[0]!;
+  before.onended?.();
+  expect(players).toHaveLength(1);
+  utterances[0]!.onend?.();
+  const after = players[1]!;
+  expect(players).toHaveLength(2);
+  expect(after.src).toBe(before.src); // reuse the very same Blob URL, not another render
+  expect(URL.createObjectURL).toHaveBeenCalledOnce();
+  expect(before.play).toHaveBeenCalledOnce();
+  expect(after.play).toHaveBeenCalledOnce();
+  expect(before.pause).not.toHaveBeenCalled(); // do not add an early teardown variable
+  expect(before.onended).toBeNull();
+  expect(events).toHaveBeenCalledWith("player-recreated");
+  after.onended?.();
+  expect(events).toHaveBeenLastCalledWith("complete");
+  expect(before.pause).toHaveBeenCalledOnce();
+  expect(after.pause).toHaveBeenCalledOnce();
+  expect(revokeObjectURL).toHaveBeenCalledOnce();
+  expect(getUserMedia).not.toHaveBeenCalled();
+  expect(sessionWrite).not.toHaveBeenCalled();
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(cancel).not.toHaveBeenCalled();
+});
+
+it("releases both players on cancellation during the fresh-player cue", () => {
+  const comparison = startAudioComparison("speech-fresh", vi.fn());
+  players[0]!.onended?.();
+  utterances[0]!.onend?.();
+  comparison.stop();
+  expect(players).toHaveLength(2);
+  for (const player of players) {
+    expect(player.pause).toHaveBeenCalledOnce();
+    expect(player.onended).toBeNull();
+  }
+  expect(revokeObjectURL).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("reports fresh-player autoplay blocking without falling back to the original player", async () => {
+  vi.stubGlobal("Audio", class extends FakeAudio {
+    constructor(src: string) {
+      super(src);
+      if (players.length === 2) this.play.mockRejectedValueOnce(new DOMException("blocked", "NotAllowedError"));
+    }
+  });
+  const events = vi.fn();
+  startAudioComparison("speech-fresh", events);
+  players[0]!.onended?.();
+  utterances[0]!.onend?.();
+  await Promise.resolve();
+  expect(events).toHaveBeenLastCalledWith("play-blocked");
+  for (const player of players) {
+    expect(player.pause).toHaveBeenCalledOnce();
+    expect(player.play).toHaveBeenCalledOnce();
+  }
+  expect(revokeObjectURL).toHaveBeenCalledOnce();
+});
+
 it("also tests automatic second playback without speech", async () => {
   const events = vi.fn();
   startAudioComparison("control", events);

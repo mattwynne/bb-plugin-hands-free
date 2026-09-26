@@ -74,7 +74,7 @@ export function AudioTestPage() {
   return <main className="h-full overflow-y-auto px-4 py-5" aria-label="Audio test">
     <div className="mx-auto max-w-xl space-y-5 pb-12">
       <h1 className="text-2xl font-bold">Audio test</h1>
-      <p>Both tones use the same unboosted WAV and the same player. Only test 3 opens the microphone; no microphone audio is recorded or uploaded. No thread access or audio-session setting changes.</p>
+      <p>Both tones use the same unboosted WAV. Tests 1–3 reuse one player; test 4 uses a new player for B. Only test 3 opens the microphone; no microphone audio is recorded or uploaded. No thread access or audio-session setting changes.</p>
       <p>Keep phone volume fixed. Do not dictate between comparisons. Report here in chat whether B matches A, is quieter, or is louder. If A is already barely audible, report that too.</p>
       <button type="button" disabled={busy} onClick={() => start("control")} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">1. Tone-only control</button>
       <p className="text-sm text-muted-foreground">Tone A → one-second silence → tone B. Checks automatic playback without speech.</p>
@@ -82,6 +82,8 @@ export function AudioTestPage() {
       <p className="text-sm text-muted-foreground">Tone A → device says “Test” → tone B.</p>
       <button type="button" disabled={busy} onClick={() => start("capture")} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">3. Microphone comparison</button>
       <p className="text-sm text-muted-foreground">Opens the mic for tone A, closes it, waits one second, then plays tone B. No speech, recording, or upload. Stop test also closes the mic.</p>
+      <button type="button" disabled={busy} onClick={() => start("speech-fresh")} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">4. Fresh-player speech comparison</button>
+      <p className="text-sm text-muted-foreground">Same as test 2, except B uses a new player with the identical WAV. No microphone or gain change.</p>
       {busy && <button type="button" onClick={() => comparison.current?.stop()} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold">Stop test</button>}
       <p aria-live="off" className="rounded-xl border p-3">{status}</p>
       {session && <details>

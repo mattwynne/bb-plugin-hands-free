@@ -12,6 +12,7 @@ export function startAudioComparison(
   report: (event: AudioComparisonEvent) => void,
 ): AudioComparison {
   let cue: MediaReadyCue | null = null;
+  let replacementPlayer: HTMLAudioElement | null = null;
   let utterance: SpeechSynthesisUtterance | null = null;
   let capture: MediaStream | null = null;
   const stopCapture = () => {
@@ -43,22 +44,28 @@ export function startAudioComparison(
       utterance.onstart = utterance.onend = utterance.onerror = null;
       if (phase === "speech") synth?.cancel();
     }
+    if (replacementPlayer) {
+      replacementPlayer.onplaying = replacementPlayer.onended = replacementPlayer.onerror = null;
+      replacementPlayer.pause();
+      replacementPlayer.removeAttribute("src");
+      replacementPlayer.load();
+    }
     if (cue) {
       cue.audio.onplaying = cue.audio.onended = cue.audio.onerror = null;
-      cue.dispose();
+      cue.dispose(); // revoke the shared Blob URL only after both players release it
     }
     report(event);
   };
   const comparison = { stop: () => finish("stopped") };
   report("start");
   if (synth?.speaking || synth?.pending) { finish("busy"); return comparison; }
-  if (mode === "speech" && (!synth || typeof SpeechSynthesisUtterance === "undefined")) {
+  if ((mode === "speech" || mode === "speech-fresh") && (!synth || typeof SpeechSynthesisUtterance === "undefined")) {
     finish("unavailable"); return comparison;
   }
   try { cue = createMediaReadyCue(READY_CUE_GAIN); }
   catch { finish("unavailable"); return comparison; }
   if (!cue) { finish("unavailable"); return comparison; }
-  const player = cue.audio;
+  let player = cue.audio;
   const playTone = (next: "before" | "after") => {
     if (done) return;
     phase = next;
@@ -99,6 +106,19 @@ export function startAudioComparison(
       utterance.onend = () => {
         if (done || phase !== "speech") return;
         report("speech-ended");
+        if (mode === "speech-fresh") {
+          try {
+            // Keep identical bytes and retain A until completion so this changes
+            // only player reuse, not source generation or early resource release.
+            replacementPlayer = new Audio(player.src);
+            replacementPlayer.onplaying = player.onplaying;
+            replacementPlayer.onended = player.onended;
+            replacementPlayer.onerror = player.onerror;
+            player.onplaying = player.onended = player.onerror = null;
+            player = replacementPlayer;
+            report("player-recreated");
+          } catch { finish("unavailable"); return; }
+        }
         playTone("after"); // no cancel, session override, gain boost, or guessed release delay
       };
       utterance.onerror = () => finish("speech-error");

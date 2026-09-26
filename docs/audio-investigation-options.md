@@ -162,10 +162,24 @@ Three speech-comparison runs (`51c0b6db-5c61-4094-bbc3-ae5373abc18d`, `1600a6b8-
 
 The user then authorized an explicitly started microphone comparison without speech. Do not implement a session reset or further gain change on the strength of the preceding results. If any test fails to play, distinguish permission/error/missing-event failure from quiet output. Relaunching the app is a preparation step, not a claimed guarantee of native session reset.
 
-### Microphone comparison (awaiting device results)
+### Microphone comparison (first results)
 
 Test 3 explicitly calls `getUserMedia({ audio: true })`, plays A on the same unboosted media player while capture tracks are live, stops every track after A ends, waits the same one-second gap used by the tone-only control, and plays B. It never creates a `MediaRecorder`, retains microphone audio data, connects the capture stream to output, uploads/transcribes anything, or invokes speech synthesis. It does not change `navigator.audioSession.type` or Web Audio. Normal Voice Drive behavior and the existing two comparison variants remain unchanged.
 
 This tests whether moving from live capture to stopped tracks changes media-cue loudness. It does not yet test `MediaRecorder` or a capture-then-speech combination, and the one-second comparison gap is not proof of native-session release. Metadata adds mic-request/open/stopped and bounded failure events, including a distinct InvalidStateError outcome. All tracks are released on completion, stop, navigation, backgrounding, playback failure, or timeout. If permission resolves after cancellation, those late tracks are stopped immediately and neither tone is played.
 
-On-device result is pending. Compare A (mic open) with B (mic closed), and check that the mic indicator clears. Unit tests cover capture sequencing, no recording/network/session writes, permission rejection, late grants, playback failure, interruption, and cleanup; they cannot measure acoustic loudness.
+Two on-device runs completed: `c1cf9124-dc94-400d-8a1f-34dcdf2d062e` and `87e0d3f2-ff5e-4f40-9d0a-e77d58451bd4`. Each logged mic-open before A, mic-stopped after A, and B playback roughly one second after the track-stop calls; both reached complete without failure events. Declared session type stayed `auto`. The user reported B was, if anything, slightly louder—not the marked loss heard in normal Voice Drive.
+
+This capture-only comparison therefore did not reproduce the large drop on the reused media path. It does not rule out capture-then-speech interaction, MediaRecorder behavior, Web Audio versus media differences, or fresh-player lifecycle. The next no-code probe is speech comparison after microphone comparison in the same app session, without restarting, looking for a clear drop rather than marginal differences. This is a sequential probe, not an exact reproduction of the production pipeline or a native-session measurement.
+
+Unit tests cover capture sequencing, no recording/network/session writes, permission rejection, late grants, playback failure, interruption, and cleanup; they cannot measure acoustic loudness.
+
+### Speech comparison after the mic tests
+
+The user reported A and B were about the same. Run `3952a635-2d7b-4204-a733-e61a9dd31194` completed with speech start/end and both media playing/ended events, declared session type `auto`, and no failures. This sequential probe still did not reproduce a large drop. It does not reproduce the full production combination of MediaRecorder, Web Audio, fresh media player, cancellation, and cleanup timing.
+
+### Fresh-player comparison (awaiting device results)
+
+Test 4 is the same short speech comparison as test 2, but creates a new `Audio` element for B. It uses **the identical Blob URL**, preserving the exact WAV bytes, unboosted gain, and sample format. A remains allocated (but ended) until test completion; its handlers are detached when B's player takes over. Both players are released before the shared URL is revoked. There is no microphone, session override, extra speech cancellation, or additional delay. A bounded `player-recreated` event identifies the changed path; no automatic reuse fallback conceals a rejected new-player play.
+
+This tests the fresh-versus-reused player difference between the successful isolated path and normal Voice Drive. It is not a proposed production fix or a claim to create a fresh native audio session. Normal Voice Drive audio is unchanged.
