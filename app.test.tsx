@@ -78,7 +78,7 @@ it("sends recorded speech on finish and automatically reads the agent reply", as
   vi.useFakeTimers();
   await act(async () => { player.onended?.(); });
   expect(player.pause).not.toHaveBeenCalled(); // don't tear audio down before the ready cue
-  await act(async () => { await vi.advanceTimersByTimeAsync(1199); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(2999); });
   expect(player.pause).not.toHaveBeenCalled();
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
   expect(player.pause).toHaveBeenCalledOnce();

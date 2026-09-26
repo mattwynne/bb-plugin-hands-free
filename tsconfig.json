@@ -26,6 +26,7 @@
     "app.test.tsx",
     "app.tsx",
     "voice-cues.ts",
-    "voice-cues.test.ts"
+    "voice-cues.test.ts",
+    "voice-cues-timeout.test.ts"
   ]
 }

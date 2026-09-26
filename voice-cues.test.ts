@@ -22,9 +22,10 @@ it("plays two distinct cues and stops the gentle thinking loop on idle/disposal"
   }
   vi.stubGlobal("AudioContext", FakeAudioContext);
   const cues = createVoiceCues();
-  cues.ready();
+  const ready = cues.ready();
   await vi.waitFor(() => expect(frequencies).toEqual([523, 659]));
-  expect(gains.filter((gain) => gain > 0.001)).toEqual([0.14, 0.14]);
+  expect(await ready).toEqual({ scheduled: true, audioState: "running" });
+  expect(gains.filter((gain) => gain > 0.001)).toEqual([0.16, 0.16]);
   cues.finished();
   await vi.waitFor(() => expect(frequencies).toEqual([523, 659, 659, 440]));
   cues.startThinking();
@@ -61,8 +62,9 @@ it("resumes an iOS interrupted audio context before playing the ready cue", asyn
   }
   vi.stubGlobal("AudioContext", InterruptedContext);
   const cues = createVoiceCues();
-  cues.ready();
+  const ready = cues.ready();
   await vi.waitFor(() => expect(frequencies).toEqual([523, 659]));
+  expect(await ready).toEqual({ scheduled: true, audioState: "running" });
   expect(resume).toHaveBeenCalledOnce();
   cues.dispose();
 });

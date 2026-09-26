@@ -37,6 +37,7 @@ function VoicePage({ subPath }: { subPath: string }) {
   const [speaking, setSpeaking] = useState(false);
   const [phase, setPhase] = useState<"loading" | "ready" | "thinking" | "attention">("loading");
   const [notice, setNotice] = useState("");
+  const [cueDiagnostic, setCueDiagnostic] = useState<string | null>(null);
   const recognition = useRef<Recognition | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const recordingStream = useRef<MediaStream | null>(null);
@@ -83,18 +84,23 @@ function VoicePage({ subPath }: { subPath: string }) {
     setSpeaking(false);
   }, []);
 
-  const finishPlayback = useCallback(() => {
+  const finishPlayback = useCallback((source: string) => {
     if (!active.current || phaseRef.current !== "ready") { stopAudio(); return; }
     if (playbackCleanupTimer.current !== null) return;
-    // Start while the speech audio session still exists. A delayed cue can be
-    // blocked when iOS interrupts Web Audio after the media source ends.
-    // Keep the speech player alive until the longer tone has finished.
+    // Start before tearing down the speech session. Keep it alive through the
+    // longer diagnostic cue and any iOS AudioContext.resume() attempt.
     const mine = sequence.current;
-    cues.current?.ready();
+    const cue = cues.current;
+    if (cue) void cue.ready().then((result) => {
+      if (mine === sequence.current && active.current) {
+        setCueDiagnostic(`Automatic (${source}): ${result.scheduled ? "scheduled" : "not scheduled"}; Web Audio ${result.audioState}`);
+      }
+    });
+    else setCueDiagnostic(`Automatic (${source}): Web Audio unavailable`);
     playbackCleanupTimer.current = setTimeout(() => {
       playbackCleanupTimer.current = null;
       if (mine === sequence.current) stopAudio();
-    }, 1200);
+    }, 3000);
   }, [stopAudio]);
   const cancelCapture = useCallback(() => {
     captureGeneration.current += 1;
@@ -134,8 +140,8 @@ function VoicePage({ subPath }: { subPath: string }) {
       if (mine !== sequence.current) return;
       const player = new Audio(`${READ_ALOUD}/stream?id=${encodeURIComponent(data.id)}`);
       audio.current = player;
-      player.onended = () => { if (mine === sequence.current) finishPlayback(); };
-      player.onerror = () => { if (mine === sequence.current) { finishPlayback(); setNotice("Audio interrupted. Open the thread to read this reply."); } };
+      player.onended = () => { if (mine === sequence.current) finishPlayback("media-ended"); };
+      player.onerror = () => { if (mine === sequence.current) { finishPlayback("media-error"); setNotice("Audio interrupted. Open the thread to read this reply."); } };
       await player.play();
       if (mine === sequence.current) setNotice("Reading aloud. Tap Stop audio at any time.");
     } catch {
@@ -149,7 +155,7 @@ function VoicePage({ subPath }: { subPath: string }) {
       // No network/service or audio autoplay denied: browser TTS may work in a
       // WebView, but is also optional. Do not claim success if neither does.
       if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
-        finishPlayback(); setNotice("Speech playback is unavailable. Install Read Aloud or review the reply on screen.");
+        finishPlayback("speech-unavailable"); setNotice("Speech playback is unavailable. Install Read Aloud or review the reply on screen.");
         return;
       }
       const utterance = new SpeechSynthesisUtterance(text);
@@ -158,8 +164,8 @@ function VoicePage({ subPath }: { subPath: string }) {
         if (speechMonitor.current !== null) clearInterval(speechMonitor.current);
         speechMonitor.current = null;
       };
-      utterance.onend = () => { if (mine === sequence.current) { stopMonitoring(); finishPlayback(); } };
-      utterance.onerror = () => { if (mine === sequence.current) { stopMonitoring(); finishPlayback(); setNotice("Speech playback failed. Read the reply on screen."); } };
+      utterance.onend = () => { if (mine === sequence.current) { stopMonitoring(); finishPlayback("speech-ended"); } };
+      utterance.onerror = () => { if (mine === sequence.current) { stopMonitoring(); finishPlayback("speech-error"); setNotice("Speech playback failed. Read the reply on screen."); } };
       window.speechSynthesis.speak(utterance);
       // Some iOS WebViews omit utterance.onend. Once speech has actually
       // started, four consecutive silent checks are a fallback completion.
@@ -168,7 +174,7 @@ function VoicePage({ subPath }: { subPath: string }) {
       speechMonitor.current = setInterval(() => {
         if (mine !== sequence.current) { stopMonitoring(); return; }
         if (window.speechSynthesis.speaking) { heardSpeech = true; silentChecks = 0; }
-        else if (heardSpeech && ++silentChecks >= 4) { stopMonitoring(); finishPlayback(); }
+        else if (heardSpeech && ++silentChecks >= 4) { stopMonitoring(); finishPlayback("speech-status"); }
       }, 300);
       setNotice("Reading with device voice.");
     }
@@ -179,6 +185,7 @@ function VoicePage({ subPath }: { subPath: string }) {
     setFallbackText("");
     setShowFallback(false);
     setRetryText(null);
+    setCueDiagnostic(null);
     lastSpoken.current = null;
     active.current = true;
     const token = transition("loading");
@@ -434,6 +441,14 @@ function VoicePage({ subPath }: { subPath: string }) {
           }} className="min-h-16 w-full rounded-xl bg-primary px-3 text-lg font-bold text-primary-foreground disabled:opacity-40">Send dictated text</button>
         </div>}
         {speaking && <button type="button" onClick={stopAudio} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold">■ Stop audio</button>}
+        <button type="button" disabled={!selected || phase !== "ready" || speaking || listening} onClick={() => {
+          const cue = cues.current;
+          if (!cue) return;
+          void cue.ready().then((result) => {
+            if (active.current) setCueDiagnostic(`Manual tap: ${result.scheduled ? "scheduled" : "not scheduled"}; Web Audio ${result.audioState}`);
+          });
+        }} className="min-h-12 w-full rounded-xl border px-3 text-sm disabled:opacity-40">Test ready tone (diagnostic)</button>
+        {cueDiagnostic && <p role="status" className="text-xs text-muted-foreground">{cueDiagnostic}</p>}
         {notice && <p role="status" aria-live="polite" className="rounded-xl border p-3 text-sm">{notice}</p>}
         <p className="text-xs text-muted-foreground">Keep BB open and unlocked. iOS may pause audio or the microphone when the app is backgrounded. Read Aloud is optional; device speech is used if its service is unavailable. This is not CarPlay.</p>
       </div>
