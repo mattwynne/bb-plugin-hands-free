@@ -21,12 +21,17 @@ export function createVoiceCues(): VoiceCues {
     const BrowserAudioContext = (typeof AudioContext !== "undefined" ? AudioContext : undefined)
       ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!BrowserAudioContext) return null;
-    try { return context ?? (context = new BrowserAudioContext()); } catch { return null; }
+    try {
+      if (context?.state === "closed") context = null;
+      return context ?? (context = new BrowserAudioContext());
+    } catch { return null; }
   };
   const activate = async (): Promise<AudioContext | null> => {
     const ctx = ensure();
     if (!ctx) return null;
-    if (ctx.state === "suspended") {
+    // WebKit also reports a non-standard "interrupted" state when system
+    // speech relinquishes its audio session. It needs resume() as well.
+    if (ctx.state !== "running") {
       try { await ctx.resume(); } catch { return null; }
     }
     return ctx.state === "running" ? ctx : null;

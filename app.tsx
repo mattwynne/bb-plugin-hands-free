@@ -42,8 +42,8 @@ function VoicePage({ subPath }: { subPath: string }) {
   const recordingStream = useRef<MediaStream | null>(null);
   const recordingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
-  const readyCueTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const playbackCleanupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const speechMonitor = useRef<ReturnType<typeof setInterval> | null>(null);
   const sequence = useRef(0);
   const captureGeneration = useRef(0);
   const sending = useRef(false);
@@ -69,10 +69,10 @@ function VoicePage({ subPath }: { subPath: string }) {
 
   const stopAudio = useCallback(() => {
     sequence.current += 1;
-    if (readyCueTimer.current !== null) clearTimeout(readyCueTimer.current);
     if (playbackCleanupTimer.current !== null) clearTimeout(playbackCleanupTimer.current);
-    readyCueTimer.current = null;
+    if (speechMonitor.current !== null) clearInterval(speechMonitor.current);
     playbackCleanupTimer.current = null;
+    speechMonitor.current = null;
     if (audio.current) {
       audio.current.pause();
       audio.current.removeAttribute("src");
@@ -86,14 +86,11 @@ function VoicePage({ subPath }: { subPath: string }) {
   const finishPlayback = useCallback(() => {
     if (!active.current || phaseRef.current !== "ready") { stopAudio(); return; }
     if (playbackCleanupTimer.current !== null) return;
-    // iOS can cut a Web Audio cue short if we clear the media element or
-    // cancel speech synthesis in the same callback as its 'ended' event.
-    // Let the speech session settle, play the whole cue, then tear it down.
+    // Start while the speech audio session still exists. A delayed cue can be
+    // blocked when iOS interrupts Web Audio after the media source ends.
+    // Keep the speech player alive until the longer tone has finished.
     const mine = sequence.current;
-    readyCueTimer.current = setTimeout(() => {
-      readyCueTimer.current = null;
-      if (mine === sequence.current && active.current) cues.current?.ready();
-    }, 180);
+    cues.current?.ready();
     playbackCleanupTimer.current = setTimeout(() => {
       playbackCleanupTimer.current = null;
       if (mine === sequence.current) stopAudio();
@@ -157,9 +154,22 @@ function VoicePage({ subPath }: { subPath: string }) {
       }
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = navigator.language || "en-US";
-      utterance.onend = () => { if (mine === sequence.current) finishPlayback(); };
-      utterance.onerror = () => { if (mine === sequence.current) { finishPlayback(); setNotice("Speech playback failed. Read the reply on screen."); } };
+      const stopMonitoring = () => {
+        if (speechMonitor.current !== null) clearInterval(speechMonitor.current);
+        speechMonitor.current = null;
+      };
+      utterance.onend = () => { if (mine === sequence.current) { stopMonitoring(); finishPlayback(); } };
+      utterance.onerror = () => { if (mine === sequence.current) { stopMonitoring(); finishPlayback(); setNotice("Speech playback failed. Read the reply on screen."); } };
       window.speechSynthesis.speak(utterance);
+      // Some iOS WebViews omit utterance.onend. Once speech has actually
+      // started, four consecutive silent checks are a fallback completion.
+      let heardSpeech = false;
+      let silentChecks = 0;
+      speechMonitor.current = setInterval(() => {
+        if (mine !== sequence.current) { stopMonitoring(); return; }
+        if (window.speechSynthesis.speaking) { heardSpeech = true; silentChecks = 0; }
+        else if (heardSpeech && ++silentChecks >= 4) { stopMonitoring(); finishPlayback(); }
+      }, 300);
       setNotice("Reading with device voice.");
     }
   }, [stopAudio, finishPlayback]);

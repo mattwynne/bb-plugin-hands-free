@@ -40,3 +40,26 @@ it("plays two distinct cues and stops the gentle thinking loop on idle/disposal"
   await Promise.resolve();
   expect(frequencies).toHaveLength(count);
 });
+
+it("resumes an iOS interrupted audio context before playing the ready cue", async () => {
+  const resume = vi.fn(async () => {});
+  const frequencies: number[] = [];
+  class InterruptedContext {
+    state = "interrupted";
+    currentTime = 0;
+    destination = {};
+    async resume() { await resume(); this.state = "running"; }
+    createOscillator() { return {
+      type: "sine", frequency: { setValueAtTime: (hz: number) => frequencies.push(hz) },
+      connect() {}, start() {}, stop() {}, disconnect() {}, onended: null,
+    }; }
+    createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
+    close() { return Promise.resolve(); }
+  }
+  vi.stubGlobal("AudioContext", InterruptedContext);
+  const cues = createVoiceCues();
+  cues.ready();
+  await vi.waitFor(() => expect(frequencies).toEqual([523, 659]));
+  expect(resume).toHaveBeenCalledOnce();
+  cues.dispose();
+});
