@@ -94,29 +94,35 @@ function VoicePage({ subPath }: { subPath: string }) {
     // speech only, test an independent local WAV through HTMLAudioElement.
     const mine = sequence.current;
     if (testMediaCue) {
-      const mediaCue = createMediaReadyCue();
-      if (mediaCue) {
-        mediaReadyCue.current = mediaCue;
-        const release = () => {
-          if (mediaReadyCue.current === mediaCue) mediaReadyCue.current = null;
-          mediaCue.dispose();
-        };
-        mediaCue.audio.onended = release;
-        mediaCue.audio.onerror = release;
-        void mediaCue.audio.play().catch(() => {
-          release();
-          if (mine === sequence.current && active.current) setNotice("Local media ready-tone test was blocked by iOS.");
-        });
-      } else {
-        setNotice("Local media ready-tone test is unavailable.");
-      }
+      // End WebKit's device-speech session first, then give iOS a full second
+      // to release its ducking before testing the independent media route.
+      window.speechSynthesis?.cancel();
+      window.setTimeout(() => {
+        if (mine !== sequence.current || !active.current) return;
+        const mediaCue = createMediaReadyCue();
+        if (mediaCue) {
+          mediaReadyCue.current = mediaCue;
+          const release = () => {
+            if (mediaReadyCue.current === mediaCue) mediaReadyCue.current = null;
+            mediaCue.dispose();
+          };
+          mediaCue.audio.onended = release;
+          mediaCue.audio.onerror = release;
+          void mediaCue.audio.play().catch(() => {
+            release();
+            if (mine === sequence.current && active.current) setNotice("Delayed local media ready-tone test was blocked by iOS.");
+          });
+        } else {
+          setNotice("Local media ready-tone test is unavailable.");
+        }
+      }, 1000);
     } else {
       cues.current?.ready();
     }
     playbackCleanupTimer.current = setTimeout(() => {
       playbackCleanupTimer.current = null;
       if (mine === sequence.current) stopAudio();
-    }, 1200);
+    }, testMediaCue ? 2500 : 1200);
   }, [stopAudio]);
   const cancelCapture = useCallback(() => {
     captureGeneration.current += 1;

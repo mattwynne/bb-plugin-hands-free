@@ -108,9 +108,10 @@ it("uses only a local media element for the ready cue after device speech", asyn
     constructor(public text: string) { utterance = this; }
   }
   vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
+  const cancelSpeech = vi.fn();
   Object.defineProperty(window, "speechSynthesis", {
     configurable: true,
-    value: { speak: vi.fn(), cancel: vi.fn(), speaking: false },
+    value: { speak: vi.fn(), cancel: cancelSpeech, speaking: false },
   });
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("Read Aloud unavailable"); }));
 
@@ -125,8 +126,15 @@ it("uses only a local media element for the ready cue after device speech", asyn
   await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
   await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await waitFor(() => expect(utterance).not.toBeNull());
+  const priorCancelCalls = cancelSpeech.mock.calls.length;
+  vi.useFakeTimers();
   await act(async () => { utterance!.onend?.(); });
-  await waitFor(() => expect(play).toHaveBeenCalledOnce());
+  expect(cancelSpeech).toHaveBeenCalledTimes(priorCancelCalls + 1);
+  expect(play).not.toHaveBeenCalled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(999); });
+  expect(play).not.toHaveBeenCalled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(play).toHaveBeenCalledOnce();
   expect(players).toHaveLength(1);
   expect(players[0]?.src).toBe("blob:local-ready-cue");
   expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: "audio/wav" }));
