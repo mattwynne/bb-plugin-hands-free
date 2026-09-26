@@ -7,10 +7,7 @@ it("plays two distinct cues and stops the gentle thinking loop on idle/disposal"
   vi.useFakeTimers();
   const frequencies: number[] = [];
   const gains: number[] = [];
-  let created = 0;
-  let closed = 0;
   class FakeAudioContext {
-    constructor() { created += 1; }
     state = "running";
     currentTime = 1;
     destination = {};
@@ -21,15 +18,13 @@ it("plays two distinct cues and stops the gentle thinking loop on idle/disposal"
       };
     }
     createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime(value: number) { gains.push(value); } }, connect() {}, disconnect() {} }; }
-    close() { closed += 1; return Promise.resolve(); }
+    close() { return Promise.resolve(); }
   }
   vi.stubGlobal("AudioContext", FakeAudioContext);
-  const report = vi.fn();
-  const cues = createVoiceCues(report);
-  const ready = cues.ready();
+  const cues = createVoiceCues();
+  cues.ready();
   await vi.waitFor(() => expect(frequencies).toEqual([523, 659]));
-  expect(await ready).toEqual({ scheduled: true, audioState: "running" });
-  expect(gains.filter((gain) => gain > 0.001)).toEqual([0.16, 0.16]);
+  expect(gains.filter((gain) => gain > 0.001)).toEqual([0.14, 0.14]);
   cues.finished();
   await vi.waitFor(() => expect(frequencies).toEqual([523, 659, 659, 440]));
   cues.startThinking();
@@ -43,16 +38,10 @@ it("plays two distinct cues and stops the gentle thinking loop on idle/disposal"
   cues.stopThinking();
   await vi.advanceTimersByTimeAsync(15000);
   expect(frequencies).toHaveLength(count);
-  cues.reset();
-  expect(closed).toBe(1);
-  expect(report).toHaveBeenCalledWith("audio-reset", "running");
-  expect(await cues.ready()).toEqual({ scheduled: true, audioState: "running" });
-  expect(created).toBe(2);
-  const resetCount = frequencies.length;
   cues.dispose();
-  expect(closed).toBe(2);
-  await cues.ready();
-  expect(frequencies).toHaveLength(resetCount);
+  cues.ready();
+  await Promise.resolve();
+  expect(frequencies).toHaveLength(count);
 });
 
 it("resumes an iOS interrupted audio context before playing the ready cue", async () => {
@@ -72,9 +61,8 @@ it("resumes an iOS interrupted audio context before playing the ready cue", asyn
   }
   vi.stubGlobal("AudioContext", InterruptedContext);
   const cues = createVoiceCues();
-  const ready = cues.ready();
+  cues.ready();
   await vi.waitFor(() => expect(frequencies).toEqual([523, 659]));
-  expect(await ready).toEqual({ scheduled: true, audioState: "running" });
   expect(resume).toHaveBeenCalledOnce();
   cues.dispose();
 });

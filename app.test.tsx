@@ -52,10 +52,9 @@ it("sends recorded speech on finish and automatically reads the agent reply", as
   vi.stubGlobal("fetch", fetchMock);
 
   const sent = vi.fn(async () => ({ accepted: true }));
-  const diagnostics = vi.fn(async () => ({ recorded: true }));
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-    rpc: { send: sent, latest: async () => ({ text: "The test is fixed." }), state: async () => ({ state: "ready" }), diagnostic: diagnostics },
+    rpc: { send: sent, latest: async () => ({ text: "The test is fixed." }), state: async () => ({ state: "ready" }) },
   });
   expect(slot.queryByText("Latest agent reply")).toBeNull();
   expect(slot.queryByText("Read reply")).toBeNull();
@@ -78,18 +77,11 @@ it("sends recorded speech on finish and automatically reads the agent reply", as
   const player = players.at(-1)!;
   vi.useFakeTimers();
   await act(async () => { player.onended?.(); });
-  expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ event: "reply-end", detail: "media-ended" }));
-  await act(async () => { await Promise.resolve(); });
-  expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ event: "cue-unavailable", detail: "automatic" }));
   expect(player.pause).not.toHaveBeenCalled(); // don't tear audio down before the ready cue
-  await act(async () => { await vi.advanceTimersByTimeAsync(2999); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1199); });
   expect(player.pause).not.toHaveBeenCalled();
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
   expect(player.pause).toHaveBeenCalledOnce();
-  fireEvent.click(slot.getByRole("button", { name: "Test ready tone (diagnostic)" }));
-  expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ event: "manual-test", detail: "manual" }));
-  fireEvent.click(slot.getByRole("button", { name: "Reset audio & test tone (diagnostic)" }));
-  expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ event: "audio-reset", audioState: "unavailable" }));
 });
 
 it("locks the microphone during agent work and unlocks it after a silent idle or failure", async () => {
@@ -99,7 +91,6 @@ it("locks the microphone during agent work and unlocks it after a silent idle or
       state: async () => ({ state: "thinking" }),
       latest: async () => ({ text: null }),
       send: async () => ({ accepted: true }),
-      diagnostic: async () => ({ recorded: true }),
     },
   });
   await waitFor(() => expect(slot!.getByText("Agent thinking…")).toBeTruthy());

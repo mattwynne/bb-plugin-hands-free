@@ -35,19 +35,6 @@ describe("voice-drive", () => {
     await harness.lifecycle.dispose();
   });
 
-  it("logs bounded, enum-only diagnostics without speech content", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "voice-drive" });
-    plugin(bb);
-    const input = { session: "test-session-1", event: "cue-scheduled" as const, detail: "automatic" as const, audioState: "running" as const, elapsedMs: 200 };
-    expect(await harness.behavior.callRpc("diagnostic", input)).toEqual({ recorded: true });
-    expect(harness.logEntries.at(-1)?.message).toContain("event=cue-scheduled detail=automatic audio=running elapsedMs=200");
-    await expect(harness.behavior.callRpc("diagnostic", { ...input, event: "my private speech" as "cue-scheduled" })).rejects.toThrow();
-    for (let index = 1; index < 120; index += 1) await harness.behavior.callRpc("diagnostic", input);
-    expect(await harness.behavior.callRpc("diagnostic", input)).toEqual({ recorded: false });
-    expect(harness.logEntries.filter((entry) => entry.message.includes("voice session="))).toHaveLength(120);
-    await harness.lifecycle.dispose();
-  });
-
   it("sends reviewed text only as a new turn and refuses empty/oversized text", async () => {
     const send = vi.fn(async () => ({ status: "active" }));
     const { bb, harness } = createFakePluginHost({ pluginId: "voice-drive", sdk: { threads: { send } } });
