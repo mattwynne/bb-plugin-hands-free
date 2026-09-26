@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { createMediaReadyCue } from "./media-ready-cue";
+import { createMediaReadyCue, POST_SPEECH_MEDIA_GAIN } from "./media-ready-cue";
+import { READY_CUE_GAIN } from "./voice-cues";
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -18,6 +19,7 @@ it("creates and disposes a local WAV media element without Web Audio", () => {
   vi.stubGlobal("Audio", FakeAudio);
 
   const cue = createMediaReadyCue();
+  expect(POST_SPEECH_MEDIA_GAIN).toBe(READY_CUE_GAIN * 3);
   expect(cue).not.toBeNull();
   expect(players[0]?.src).toBe("blob:ready-cue");
   expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: "audio/wav" }));

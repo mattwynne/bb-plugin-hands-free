@@ -1,5 +1,7 @@
 // Small local Web Audio cues; no downloaded files, persistent audio stream,
 // or network requests. Playback is best effort under iOS user-gesture rules.
+export const READY_CUE_GAIN = 0.14;
+
 export interface VoiceCues {
   unlock(): void;
   ready(): void;
@@ -61,8 +63,8 @@ export function createVoiceCues(): VoiceCues {
     unlock() { void activate(); },
     // About 8 dB above the old 0.055 gain; audible on an iPhone speaker
     // without making the periodic thinking pulse equally loud.
-    ready() { cue([[523, 0], [659, 0.23]], 0.14, false, 0.28); },
-    finished() { cue([[659, 0], [440, 0.16]], 0.045); },
+    ready() { cue([[523, 0], [659, 0.23]], READY_CUE_GAIN, false, 0.28); },
+    finished() { cue([[659, 0], [440, 0.16]], READY_CUE_GAIN); },
     startThinking() {
       if (disposed || thinking) return;
       thinking = true;

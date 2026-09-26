@@ -1,5 +1,8 @@
-// Local PCM WAV used only to test whether iOS restores HTML media playback
-// after device speech. It makes no network request and does not touch Web Audio.
+import { READY_CUE_GAIN } from "./voice-cues";
+
+// Local PCM WAV used only after device speech. iOS attenuates this media route
+// even after a delay, so compensate here without changing the loud pre-speech cue.
+export const POST_SPEECH_MEDIA_GAIN = READY_CUE_GAIN * 3;
 export interface MediaReadyCue {
   audio: HTMLAudioElement;
   dispose(): void;
@@ -38,7 +41,7 @@ export function createMediaReadyCue(): MediaReadyCue | null {
       const local = time - start;
       if (local < 0 || local >= noteLength) continue;
       const envelope = Math.min(1, local / fade, (noteLength - local) / fade);
-      sample += Math.sin(2 * Math.PI * frequency * local) * envelope * 0.14;
+      sample += Math.sin(2 * Math.PI * frequency * local) * envelope * POST_SPEECH_MEDIA_GAIN;
     }
     view.setInt16(44 + frame * 2, Math.round(Math.max(-1, Math.min(1, sample)) * 0x7fff), true);
   }

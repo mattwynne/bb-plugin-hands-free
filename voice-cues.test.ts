@@ -27,6 +27,7 @@ it("plays two distinct cues and stops the gentle thinking loop on idle/disposal"
   expect(gains.filter((gain) => gain > 0.001)).toEqual([0.14, 0.14]);
   cues.finished();
   await vi.waitFor(() => expect(frequencies).toEqual([523, 659, 659, 440]));
+  expect(gains.filter((gain) => gain > 0.001)).toEqual([0.14, 0.14, 0.14, 0.14]);
   cues.startThinking();
   expect(frequencies).toHaveLength(4); // the confirmation tone is not overlapped
   await vi.advanceTimersByTimeAsync(1200);
