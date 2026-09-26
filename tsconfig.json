@@ -23,6 +23,8 @@
   "include": [
     "server.ts",
     "server.test.ts",
+    "menu-link.ts",
+    "menu-link.test.ts",
     "app.tsx"
   ]
 }
