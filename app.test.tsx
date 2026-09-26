@@ -10,6 +10,7 @@ let slot: ReturnType<typeof renderSlot> | undefined;
 afterEach(() => {
   slot?.lifecycle.unmount();
   slot = undefined;
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -34,14 +35,15 @@ it("sends recorded speech on finish and automatically reads the agent reply", as
   }
   vi.stubGlobal("MediaRecorder", FakeRecorder);
   const play = vi.fn(async () => {});
+  const players: FakeAudio[] = [];
   class FakeAudio {
     onended: (() => void) | null = null;
     onerror: (() => void) | null = null;
-    constructor(public src: string) {}
+    constructor(public src: string) { players.push(this); }
     play = play;
-    pause() {}
-    removeAttribute() {}
-    load() {}
+    pause = vi.fn();
+    removeAttribute = vi.fn();
+    load = vi.fn();
   }
   vi.stubGlobal("Audio", FakeAudio);
   const fetchMock = vi.fn(async (input: string) => input.includes("voice-transcription")
@@ -72,6 +74,14 @@ it("sends recorded speech on finish and automatically reads the agent reply", as
   expect(slot.queryByText("The test is fixed.")).toBeNull();
   await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_2", state: "ready", hasReply: true });
   expect(play).toHaveBeenCalledTimes(1);
+  const player = players.at(-1)!;
+  vi.useFakeTimers();
+  await act(async () => { player.onended?.(); });
+  expect(player.pause).not.toHaveBeenCalled(); // don't tear audio down before the ready cue
+  await act(async () => { await vi.advanceTimersByTimeAsync(1199); });
+  expect(player.pause).not.toHaveBeenCalled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(player.pause).toHaveBeenCalledOnce();
 });
 
 it("locks the microphone during agent work and unlocks it after a silent idle or failure", async () => {

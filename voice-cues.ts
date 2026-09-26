@@ -45,16 +45,16 @@ export function createVoiceCues(): VoiceCues {
     oscillator.stop(at + length + 0.01);
     oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
   };
-  const cue = (notes: readonly [number, number][], volume: number, onlyThinking = false) => {
+  const cue = (notes: readonly [number, number][], volume: number, onlyThinking = false, length = 0.16) => {
     void activate().then((ctx) => {
       if (!ctx || disposed || (onlyThinking && !thinking)) return;
       const now = ctx.currentTime + 0.01;
-      for (const [hz, delay] of notes) tone(ctx, hz, now + delay, 0.16, volume);
+      for (const [hz, delay] of notes) tone(ctx, hz, now + delay, length, volume);
     });
   };
   return {
     unlock() { void activate(); },
-    ready() { cue([[523, 0], [659, 0.16]], 0.045); },
+    ready() { cue([[523, 0], [659, 0.23]], 0.055, false, 0.28); },
     finished() { cue([[659, 0], [440, 0.16]], 0.045); },
     startThinking() {
       if (disposed || thinking) return;
