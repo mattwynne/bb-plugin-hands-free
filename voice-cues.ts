@@ -64,7 +64,8 @@ export function createVoiceCues(): VoiceCues {
     // About 8 dB above the old 0.055 gain; audible on an iPhone speaker
     // without making the periodic thinking pulse equally loud.
     ready() { cue([[523, 0], [659, 0.23]], READY_CUE_GAIN, false, 0.28); },
-    finished() { cue([[659, 0], [440, 0.16]], READY_CUE_GAIN); },
+    // Keep the exact same tone as ready while calibrating perceived volume.
+    finished() { cue([[523, 0], [659, 0.23]], READY_CUE_GAIN, false, 0.28); },
     startThinking() {
       if (disposed || thinking) return;
       thinking = true;
