@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { definePluginApp, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
+import { createVoiceCues, type VoiceCues } from "./voice-cues";
 
 // Web Speech is not part of every iOS WebView. Keep the keyboard-dictation
 // path usable when SpeechRecognition is absent or permission is denied.
@@ -34,6 +35,7 @@ function VoicePage({ subPath }: { subPath: string }) {
   const [listening, setListening] = useState(false);
   const [busy, setBusy] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [phase, setPhase] = useState<"loading" | "ready" | "thinking" | "attention">("loading");
   const [notice, setNotice] = useState("");
   const recognition = useRef<Recognition | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
@@ -45,8 +47,23 @@ function VoicePage({ subPath }: { subPath: string }) {
   const sending = useRef(false);
   const active = useRef(false);
   const lastSpoken = useRef<string | null>(null);
+  const cues = useRef<VoiceCues | null>(null);
+  const phaseRef = useRef<typeof phase>("loading");
+  const phaseToken = useRef(0);
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
+  useEffect(() => {
+    cues.current = createVoiceCues();
+    return () => { cues.current?.dispose(); cues.current = null; };
+  }, []);
+  const transition = useCallback((next: typeof phase) => {
+    phaseToken.current += 1;
+    phaseRef.current = next;
+    setPhase(next);
+    if (next === "thinking") cues.current?.startThinking();
+    else cues.current?.stopThinking();
+    return phaseToken.current;
+  }, []);
 
   const stopAudio = useCallback(() => {
     sequence.current += 1;
@@ -58,6 +75,24 @@ function VoicePage({ subPath }: { subPath: string }) {
     }
     window.speechSynthesis?.cancel();
     setSpeaking(false);
+  }, []);
+
+  const finishPlayback = useCallback(() => {
+    stopAudio();
+    if (active.current && phaseRef.current === "ready") cues.current?.ready();
+  }, [stopAudio]);
+  const cancelCapture = useCallback(() => {
+    captureGeneration.current += 1;
+    recognition.current?.abort();
+    recognition.current = null;
+    if (recorder.current?.state === "recording") { recorder.current.onstop = null; recorder.current.stop(); }
+    recorder.current = null;
+    recordingStream.current?.getTracks().forEach((track) => track.stop());
+    recordingStream.current = null;
+    if (recordingTimer.current) clearTimeout(recordingTimer.current);
+    recordingTimer.current = null;
+    setListening(false);
+    setBusy(false);
   }, []);
 
   const speak = useCallback(async (text: string) => {
@@ -84,8 +119,8 @@ function VoicePage({ subPath }: { subPath: string }) {
       if (mine !== sequence.current) return;
       const player = new Audio(`${READ_ALOUD}/stream?id=${encodeURIComponent(data.id)}`);
       audio.current = player;
-      player.onended = () => { if (mine === sequence.current) stopAudio(); };
-      player.onerror = () => { if (mine === sequence.current) { stopAudio(); setNotice("Audio interrupted. Open the thread to read this reply."); } };
+      player.onended = () => { if (mine === sequence.current) finishPlayback(); };
+      player.onerror = () => { if (mine === sequence.current) { finishPlayback(); setNotice("Audio interrupted. Open the thread to read this reply."); } };
       await player.play();
       if (mine === sequence.current) setNotice("Reading aloud. Tap Stop audio at any time.");
     } catch {
@@ -99,64 +134,86 @@ function VoicePage({ subPath }: { subPath: string }) {
       // No network/service or audio autoplay denied: browser TTS may work in a
       // WebView, but is also optional. Do not claim success if neither does.
       if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
-        stopAudio(); setNotice("Speech playback is unavailable. Install Read Aloud or review the reply on screen.");
+        finishPlayback(); setNotice("Speech playback is unavailable. Install Read Aloud or review the reply on screen.");
         return;
       }
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = navigator.language || "en-US";
-      utterance.onend = () => { if (mine === sequence.current) stopAudio(); };
-      utterance.onerror = () => { if (mine === sequence.current) { stopAudio(); setNotice("Speech playback failed. Read the reply on screen."); } };
+      utterance.onend = () => { if (mine === sequence.current) finishPlayback(); };
+      utterance.onerror = () => { if (mine === sequence.current) { finishPlayback(); setNotice("Speech playback failed. Read the reply on screen."); } };
       window.speechSynthesis.speak(utterance);
       setNotice("Reading with device voice.");
     }
-  }, [stopAudio]);
+  }, [stopAudio, finishPlayback]);
 
   useEffect(() => {
-    captureGeneration.current += 1;
-    recognition.current?.abort();
-    recognition.current = null;
-    if (recorder.current?.state === "recording") { recorder.current.onstop = null; recorder.current.stop(); }
-    recorder.current = null;
-    recordingStream.current?.getTracks().forEach((track) => track.stop());
-    recordingStream.current = null;
-    if (recordingTimer.current) clearTimeout(recordingTimer.current);
-    setListening(false);
-    setBusy(false);
+    cancelCapture();
     setFallbackText("");
     setShowFallback(false);
     setRetryText(null);
     lastSpoken.current = null;
     active.current = true;
-    setNotice("Tap to talk. Your words will be sent when you finish.");
+    const token = transition("loading");
+    setNotice(selectedId ? "Checking thread status…" : "Choose a thread to begin.");
     stopAudio();
+    if (selectedId) {
+      void rpc.call("state", { threadId: selectedId }).then(({ state }) => {
+        if (!active.current || selectedRef.current !== selectedId || phaseToken.current !== token) return;
+        transition(state);
+        if (state === "ready") { cues.current?.ready(); setNotice("Ready. Tap to talk."); }
+        else if (state === "attention") setNotice("Agent needs your attention. Open the thread to respond.");
+        else setNotice("Agent is thinking. Talk is disabled until it finishes.");
+      }, () => {
+        if (active.current && selectedRef.current === selectedId && phaseToken.current === token) {
+          transition("attention");
+          setNotice("Could not check thread status. Reopen Voice Drive to retry.");
+        }
+      });
+    }
     return () => {
       active.current = false;
-      captureGeneration.current += 1;
-      recognition.current?.abort(); recognition.current = null;
-      if (recorder.current?.state === "recording") { recorder.current.onstop = null; recorder.current.stop(); }
-      recordingStream.current?.getTracks().forEach((track) => track.stop());
-      if (recordingTimer.current) clearTimeout(recordingTimer.current);
+      cues.current?.stopThinking();
+      phaseToken.current += 1;
+      cancelCapture();
       stopAudio();
     };
-  }, [selectedId, stopAudio]);
+  }, [selectedId, stopAudio, rpc, transition, cancelCapture]);
 
-  const readNewReply = useCallback(async (threadId: string) => {
+  const readNewReply = useCallback(async (threadId: string, token: number) => {
     try {
       const result = await rpc.call("latest", { threadId });
-      if (!active.current || selectedRef.current !== threadId || !result.text) return;
-      if (lastSpoken.current === result.text) return; // repeated idle signal, not a new answer
+      if (!active.current || selectedRef.current !== threadId || phaseToken.current !== token || !result.text) return;
+      if (lastSpoken.current === result.text) { cues.current?.ready(); return; }
       lastSpoken.current = result.text;
       await speak(result.text);
     } catch (error) {
-      if (active.current && selectedRef.current === threadId) {
+      if (active.current && selectedRef.current === threadId && phaseToken.current === token) {
+        cues.current?.ready();
         setNotice(error instanceof Error ? `Could not read reply: ${error.message}` : "Could not read reply.");
       }
     }
   }, [rpc, speak]);
-  useRealtime("voice-drive/thread-idle", (payload) => {
-    if (!payload || typeof payload !== "object" || !("threadId" in payload)) return;
-    if (typeof payload.threadId !== "string" || payload.threadId !== selectedRef.current) return;
-    void readNewReply(payload.threadId);
+  useRealtime("voice-drive/thread-state", (payload) => {
+    if (!payload || typeof payload !== "object" || !("threadId" in payload) || !("state" in payload)) return;
+    if (typeof payload.threadId !== "string" || payload.threadId !== selectedRef.current || !active.current) return;
+    if (payload.state === "thinking") {
+      if (listening || recorder.current || recognition.current) cancelCapture();
+      stopAudio();
+      transition("thinking");
+      setNotice("Agent is thinking. Talk is disabled until it finishes.");
+    } else if (payload.state === "attention") {
+      if (listening || recorder.current || recognition.current) cancelCapture();
+      transition("attention");
+      setNotice("Agent needs your attention. Open the thread to respond.");
+    } else if (payload.state === "failed") {
+      transition("ready");
+      cues.current?.ready();
+      setNotice("Agent stopped with an error. Open the thread to inspect it.");
+    } else if (payload.state === "ready") {
+      const token = transition("ready");
+      if ("hasReply" in payload && payload.hasReply === true) void readNewReply(payload.threadId, token);
+      else { cues.current?.ready(); setNotice("Ready. Tap to talk."); }
+    }
   });
 
   const sendText = async (text: string, threadId: string) => {
@@ -168,13 +225,25 @@ function VoicePage({ subPath }: { subPath: string }) {
     sending.current = true;
     setBusy(true);
     setRetryText(null);
+    const token = transition("thinking");
     setNotice("Sending your words…");
     try {
       await rpc.call("send", { threadId, text: message });
-      if (active.current && selectedRef.current === threadId) setNotice("Sent. Waiting for the agent's reply…");
+      if (active.current && selectedRef.current === threadId && phaseRef.current === "thinking") {
+        setNotice("Sent. Agent is thinking…");
+      }
     } catch (error) {
       if (active.current && selectedRef.current === threadId) {
         setRetryText(message);
+        // A rejected send may mean the thread was already running. Query the
+        // real state instead of enabling the microphone over an active turn.
+        try {
+          const current = await rpc.call("state", { threadId });
+          if (phaseToken.current === token) {
+            transition(current.state);
+            if (current.state === "ready") cues.current?.ready();
+          }
+        } catch { if (phaseToken.current === token) transition("attention"); }
         setNotice(error instanceof Error ? `Not sent: ${error.message}` : "Not sent. Try again.");
       }
     } finally {
@@ -208,6 +277,7 @@ function VoicePage({ subPath }: { subPath: string }) {
     };
     instance.onerror = (event) => {
       failed = true;
+      setBusy(false);
       setShowFallback(true);
       setNotice(`Microphone unavailable (${event.error}). Use the iPhone keyboard microphone below.`);
     };
@@ -216,10 +286,11 @@ function VoicePage({ subPath }: { subPath: string }) {
       recognition.current = null;
       setListening(false);
       if (!failed && recognized) void sendText(recognized, owner);
-      else if (!failed) setNotice("No words heard. Tap to talk and try again.");
+      else { setBusy(false); if (!failed) setNotice("No words heard. Tap to talk and try again."); }
     };
     try {
       instance.start(); // Synchronous tap gesture, required by iOS permissions.
+      cues.current?.ready();
       setListening(true);
       setNotice("Listening. Tap Finish dictating to send your words.");
     } catch {
@@ -229,6 +300,7 @@ function VoicePage({ subPath }: { subPath: string }) {
     }
   };
   const startListening = async () => {
+    cues.current?.unlock(); // Called synchronously from the user's tap on iOS.
     stopAudio();
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       startBrowserRecognition();
@@ -259,9 +331,10 @@ function VoicePage({ subPath }: { subPath: string }) {
         recordingStream.current = null;
         recorder.current = null;
         setListening(false);
-        if (capture !== captureGeneration.current || selectedRef.current !== owner || recordingFailed) return;
+        if (capture !== captureGeneration.current || selectedRef.current !== owner) return;
+        if (recordingFailed) { setBusy(false); return; }
         const blob = new Blob(chunks, { type: instance.mimeType || "audio/mp4" });
-        if (!blob.size) { setNotice("No audio was recorded. Try again."); return; }
+        if (!blob.size) { setBusy(false); setNotice("No audio was recorded. Try again."); return; }
         setBusy(true);
         setNotice("Transcribing…");
         try {
@@ -282,10 +355,13 @@ function VoicePage({ subPath }: { subPath: string }) {
         } finally { if (capture === captureGeneration.current && active.current) setBusy(false); }
       };
       instance.start();
+      cues.current?.ready();
       setBusy(false);
       setListening(true);
       setNotice("Recording. Tap Finish dictating; recording ends automatically after one minute.");
-      recordingTimer.current = setTimeout(() => { if (instance.state === "recording") instance.stop(); }, 60000);
+      recordingTimer.current = setTimeout(() => {
+        if (instance.state === "recording") { cues.current?.finished(); setBusy(true); instance.stop(); }
+      }, 60000);
     } catch {
       if (capture === captureGeneration.current) {
         recordingStream.current?.getTracks().forEach((track) => track.stop());
@@ -296,6 +372,8 @@ function VoicePage({ subPath }: { subPath: string }) {
     } finally { if (capture === captureGeneration.current && !recorder.current) setBusy(false); }
   };
   const stopListening = () => {
+    cues.current?.finished();
+    setBusy(true);
     if (recorder.current?.state === "recording") recorder.current.stop();
     else recognition.current?.stop();
     setListening(false);
@@ -304,7 +382,7 @@ function VoicePage({ subPath }: { subPath: string }) {
     <main className="h-full min-h-0 overflow-y-auto px-4 py-5" aria-label="Voice Drive">
       <div className="mx-auto max-w-xl space-y-5 pb-12">
         <h1 className="text-2xl font-bold">Voice Drive</h1>
-        <p className="text-sm text-muted-foreground">Tap to start; tap again to send. New agent replies play automatically while this page is open. Pull over to review code or approve permissions.</p>
+        <p className="text-sm text-muted-foreground">Listen for the ready tone, then tap to dictate. The finish tone confirms your words are being sent. Quiet notes play while the agent works. Pull over to review code or approve permissions.</p>
         <label className="block text-base font-semibold" htmlFor="voice-drive-thread">Thread</label>
         <select id="voice-drive-thread" className="w-full min-h-14 rounded-xl border bg-background px-3 text-base" value={selectedId} onChange={(event) => navigate.toPluginPanel("drive", { subPath: encodeURIComponent(event.target.value) })}>
           <option value="">Choose a thread</option>
@@ -312,22 +390,22 @@ function VoicePage({ subPath }: { subPath: string }) {
         </select>
         {threadsStatus === "error" && <p role="alert">Unable to load threads.</p>}
         {selectedId && !selected && threadsStatus !== "loading" && <p role="alert">Thread not in the current list. Select another thread.</p>}
-        <button type="button" disabled={!selected || busy} onClick={listening ? stopListening : startListening}
+        <button type="button" disabled={!selected || busy || speaking || phase !== "ready"} onClick={listening ? stopListening : startListening}
           className="flex min-h-28 w-full items-center justify-center rounded-3xl bg-primary px-5 text-2xl font-bold text-primary-foreground shadow-lg disabled:opacity-40"
           aria-pressed={listening} aria-label={listening ? "Finish dictating" : "Start dictating"}>
-          {listening ? "■  Finish dictating" : "🎙  Tap to talk"}
+          {listening ? "■  Finish dictating" : phase === "thinking" ? "Agent thinking…" : phase === "attention" ? "Needs attention" : phase === "loading" ? "Checking thread…" : speaking ? "Reading reply…" : "🎙  Tap to talk"}
         </button>
-        {retryText && <button type="button" disabled={busy} onClick={() => void sendText(retryText, selectedId)} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">Retry sending</button>}
+        {retryText && <button type="button" disabled={busy || phase !== "ready"} onClick={() => void sendText(retryText, selectedId)} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">Retry sending</button>}
         {showFallback && <div className="space-y-3 rounded-xl border p-4">
           <label htmlFor="voice-drive-fallback" className="block font-semibold">Keyboard dictation fallback</label>
           <textarea id="voice-drive-fallback" rows={3} maxLength={12000} value={fallbackText} onChange={(event) => setFallbackText(event.target.value)} placeholder="Use the iPhone keyboard microphone" className="w-full rounded-xl border bg-background p-4 text-lg" />
-          <button type="button" disabled={!selected || !fallbackText.trim() || busy} onClick={() => {
+          <button type="button" disabled={!selected || !fallbackText.trim() || busy || phase !== "ready"} onClick={() => {
             const text = fallbackText;
             setFallbackText("");
             void sendText(text, selectedId);
           }} className="min-h-16 w-full rounded-xl bg-primary px-3 text-lg font-bold text-primary-foreground disabled:opacity-40">Send dictated text</button>
         </div>}
-        {speaking && <button type="button" onClick={stopAudio} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold">■ Stop audio</button>}
+        {speaking && <button type="button" onClick={finishPlayback} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold">■ Stop audio</button>}
         {notice && <p role="status" aria-live="polite" className="rounded-xl border p-3 text-sm">{notice}</p>}
         <p className="text-xs text-muted-foreground">Keep BB open and unlocked. iOS may pause audio or the microphone when the app is backgrounded. Read Aloud is optional; device speech is used if its service is unavailable. This is not CarPlay.</p>
       </div>

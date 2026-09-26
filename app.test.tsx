@@ -52,22 +52,46 @@ it("sends recorded speech on finish and automatically reads the agent reply", as
   const sent = vi.fn(async () => ({ accepted: true }));
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-    rpc: { send: sent, latest: async () => ({ text: "The test is fixed." }) },
+    rpc: { send: sent, latest: async () => ({ text: "The test is fixed." }), state: async () => ({ state: "ready" }) },
   });
   expect(slot.queryByText("Latest agent reply")).toBeNull();
   expect(slot.queryByText("Read reply")).toBeNull();
   expect(slot.queryByText("Send this reply")).toBeNull();
 
+  await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(slot.getByRole("button", { name: "Start dictating" }));
   await waitFor(() => expect(slot!.getByRole("button", { name: "Finish dictating" })).toBeTruthy());
   await act(async () => { fireEvent.click(slot!.getByRole("button", { name: "Finish dictating" })); });
   await waitFor(() => expect(sent).toHaveBeenCalledWith({ threadId: "th_1", text: "Fix the test" }));
   expect(fetchMock).toHaveBeenCalledWith("/api/v1/system/voice-transcription", expect.objectContaining({ method: "POST" }));
 
-  await slot.behavior.emitRealtime("voice-drive/thread-idle", { threadId: "th_1" });
+  expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
+  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
   expect(slot.getByRole("button", { name: "■ Stop audio" })).toBeTruthy();
   expect(slot.queryByText("The test is fixed.")).toBeNull();
-  await slot.behavior.emitRealtime("voice-drive/thread-idle", { threadId: "th_2" });
+  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_2", state: "ready", hasReply: true });
   expect(play).toHaveBeenCalledTimes(1);
+});
+
+it("locks the microphone during agent work and unlocks it after a silent idle or failure", async () => {
+  slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
+    sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
+    rpc: {
+      state: async () => ({ state: "thinking" }),
+      latest: async () => ({ text: null }),
+      send: async () => ({ accepted: true }),
+    },
+  });
+  await waitFor(() => expect(slot!.getByText("Agent thinking…")).toBeTruthy());
+  expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
+  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "attention" });
+  expect(slot.getByText("Needs attention")).toBeTruthy();
+  expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
+  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: false });
+  expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
+  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "thinking" });
+  expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
+  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "failed" });
+  expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
 });
