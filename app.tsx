@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { definePluginApp, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import { createVoiceCues, type VoiceCues } from "./voice-cues";
+import { createMediaReadyCue, type MediaReadyCue } from "./media-ready-cue";
 
 // Web Speech is not part of every iOS WebView. Keep the keyboard-dictation
 // path usable when SpeechRecognition is absent or permission is denied.
@@ -42,6 +43,7 @@ function VoicePage({ subPath }: { subPath: string }) {
   const recordingStream = useRef<MediaStream | null>(null);
   const recordingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
+  const mediaReadyCue = useRef<MediaReadyCue | null>(null);
   const playbackCleanupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechMonitor = useRef<ReturnType<typeof setInterval> | null>(null);
   const sequence = useRef(0);
@@ -79,18 +81,38 @@ function VoicePage({ subPath }: { subPath: string }) {
       audio.current.load();
       audio.current = null;
     }
+    mediaReadyCue.current?.dispose();
+    mediaReadyCue.current = null;
     window.speechSynthesis?.cancel();
     setSpeaking(false);
   }, []);
 
-  const finishPlayback = useCallback(() => {
+  const finishPlayback = useCallback((testMediaCue = false) => {
     if (!active.current || phaseRef.current !== "ready") { stopAudio(); return; }
     if (playbackCleanupTimer.current !== null) return;
-    // Start while the speech audio session still exists. A delayed cue can be
-    // blocked when iOS interrupts Web Audio after the media source ends.
-    // Keep the speech player alive until the longer tone has finished.
+    // Keep the established Web Audio behavior for streamed speech. For device
+    // speech only, test an independent local WAV through HTMLAudioElement.
     const mine = sequence.current;
-    cues.current?.ready();
+    if (testMediaCue) {
+      const mediaCue = createMediaReadyCue();
+      if (mediaCue) {
+        mediaReadyCue.current = mediaCue;
+        const release = () => {
+          if (mediaReadyCue.current === mediaCue) mediaReadyCue.current = null;
+          mediaCue.dispose();
+        };
+        mediaCue.audio.onended = release;
+        mediaCue.audio.onerror = release;
+        void mediaCue.audio.play().catch(() => {
+          release();
+          if (mine === sequence.current && active.current) setNotice("Local media ready-tone test was blocked by iOS.");
+        });
+      } else {
+        setNotice("Local media ready-tone test is unavailable.");
+      }
+    } else {
+      cues.current?.ready();
+    }
     playbackCleanupTimer.current = setTimeout(() => {
       playbackCleanupTimer.current = null;
       if (mine === sequence.current) stopAudio();
@@ -158,8 +180,8 @@ function VoicePage({ subPath }: { subPath: string }) {
         if (speechMonitor.current !== null) clearInterval(speechMonitor.current);
         speechMonitor.current = null;
       };
-      utterance.onend = () => { if (mine === sequence.current) { stopMonitoring(); finishPlayback(); } };
-      utterance.onerror = () => { if (mine === sequence.current) { stopMonitoring(); finishPlayback(); setNotice("Speech playback failed. Read the reply on screen."); } };
+      utterance.onend = () => { if (mine === sequence.current) { stopMonitoring(); finishPlayback(true); } };
+      utterance.onerror = () => { if (mine === sequence.current) { stopMonitoring(); finishPlayback(true); setNotice("Speech playback failed. Read the reply on screen."); } };
       window.speechSynthesis.speak(utterance);
       // Some iOS WebViews omit utterance.onend. Once speech has actually
       // started, four consecutive silent checks are a fallback completion.
@@ -168,7 +190,7 @@ function VoicePage({ subPath }: { subPath: string }) {
       speechMonitor.current = setInterval(() => {
         if (mine !== sequence.current) { stopMonitoring(); return; }
         if (window.speechSynthesis.speaking) { heardSpeech = true; silentChecks = 0; }
-        else if (heardSpeech && ++silentChecks >= 4) { stopMonitoring(); finishPlayback(); }
+        else if (heardSpeech && ++silentChecks >= 4) { stopMonitoring(); finishPlayback(true); }
       }, 300);
       setNotice("Reading with device voice.");
     }

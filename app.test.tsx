@@ -84,6 +84,54 @@ it("sends recorded speech on finish and automatically reads the agent reply", as
   expect(player.pause).toHaveBeenCalledOnce();
 });
 
+it("uses only a local media element for the ready cue after device speech", async () => {
+  const createObjectURL = vi.fn(() => "blob:local-ready-cue");
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+  const play = vi.fn(async () => {});
+  const players: FakeAudio[] = [];
+  class FakeAudio {
+    onended: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    pause = vi.fn();
+    removeAttribute = vi.fn();
+    load = vi.fn();
+    constructor(public src: string) { players.push(this); }
+    play = play;
+  }
+  vi.stubGlobal("Audio", FakeAudio);
+  let utterance: FakeUtterance | null = null;
+  class FakeUtterance {
+    lang = "";
+    onend: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor(public text: string) { utterance = this; }
+  }
+  vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
+  Object.defineProperty(window, "speechSynthesis", {
+    configurable: true,
+    value: { speak: vi.fn(), cancel: vi.fn(), speaking: false },
+  });
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("Read Aloud unavailable"); }));
+
+  slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
+    sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
+    rpc: {
+      state: async () => ({ state: "ready" }),
+      latest: async () => ({ text: "Device speech reply" }),
+      send: async () => ({ accepted: true }),
+    },
+  });
+  await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
+  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await waitFor(() => expect(utterance).not.toBeNull());
+  await act(async () => { utterance!.onend?.(); });
+  await waitFor(() => expect(play).toHaveBeenCalledOnce());
+  expect(players).toHaveLength(1);
+  expect(players[0]?.src).toBe("blob:local-ready-cue");
+  expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: "audio/wav" }));
+});
+
 it("locks the microphone during agent work and unlocks it after a silent idle or failure", async () => {
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
