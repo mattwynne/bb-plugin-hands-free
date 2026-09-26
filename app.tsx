@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { definePluginApp, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, experimental_Icon as Icon, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import { createVoiceCues, type VoiceCues } from "./voice-cues";
 
@@ -433,6 +433,36 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     else recognition.current?.stop();
     setListening(false);
   };
+  const controlState = !selected
+    ? "start"
+    : speaking
+      ? "playback"
+      : listening
+        ? "complete"
+        : busy || phase === "loading" || phase === "thinking"
+          ? "working"
+          : phase === "attention"
+            ? "attention"
+            : "start";
+  const controlLabel = controlState === "playback"
+    ? "Stop audio"
+    : controlState === "complete"
+      ? "Finish dictating"
+      : controlState === "working"
+        ? phase === "loading" ? "Checking thread" : "Working"
+        : controlState === "attention"
+          ? "Needs attention"
+          : "Start dictating";
+  const controlIcon = controlState === "playback"
+    ? "Square"
+    : controlState === "complete"
+      ? "Square"
+      : controlState === "working"
+        ? "Spinner"
+        : controlState === "attention"
+          ? "AlertTriangle"
+          : "Mic";
+  const controlDisabled = !selected || (!speaking && (busy || phase !== "ready"));
   return (
     <main className="h-full min-h-0 overflow-y-auto px-4 py-5" aria-label="Hands-Free">
       <div className="mx-auto max-w-xl space-y-5 pb-12">
@@ -444,11 +474,13 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         </select>
         {threadsStatus === "error" && <p role="alert">Unable to load threads.</p>}
         {selectedId && !selected && threadsStatus !== "loading" && <p role="alert">Thread not in the current list. Select another thread.</p>}
-        <button type="button" disabled={!selected || busy || speaking || phase !== "ready"} onClick={listening ? stopListening : startListening}
-          className="flex min-h-28 w-full items-center justify-center rounded-3xl bg-primary px-5 text-2xl font-bold text-primary-foreground shadow-lg disabled:opacity-40"
-          aria-pressed={listening} aria-label={listening ? "Finish dictating" : "Start dictating"}>
-          {listening ? "■  Finish dictating" : phase === "thinking" ? "Agent thinking…" : phase === "attention" ? "Needs attention" : phase === "loading" ? "Checking thread…" : speaking ? "Reading reply…" : "🎙  Tap to talk"}
-        </button>
+        <div className="flex justify-center py-2">
+          <button type="button" disabled={controlDisabled} onClick={speaking ? stopAudio : listening ? stopListening : startListening}
+            className="inline-flex size-28 shrink-0 cursor-pointer items-center justify-center rounded-full bg-foreground text-background transition-colors duration-150 hover:bg-foreground/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-40"
+            aria-pressed={listening} aria-label={controlLabel} data-control-state={controlState}>
+            <Icon name={controlIcon} className={`size-9 ${controlState === "working" ? "animate-spin motion-reduce:animate-none" : controlState === "complete" || controlState === "playback" ? "fill-current [&_*]:stroke-0" : ""}`} aria-hidden />
+          </button>
+        </div>
         {retryText && <button type="button" disabled={busy || phase !== "ready"} onClick={() => void sendText(retryText, selectedId)} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">Retry sending</button>}
         {showFallback && <div className="space-y-3 rounded-xl border p-4">
           <label htmlFor="hands-free-fallback" className="block font-semibold">Keyboard dictation fallback</label>
@@ -459,7 +491,6 @@ function HandsFreePage({ subPath }: { subPath: string }) {
             void sendText(text, selectedId);
           }} className="min-h-16 w-full rounded-xl bg-primary px-3 text-lg font-bold text-primary-foreground disabled:opacity-40">Send dictated text</button>
         </div>}
-        {speaking && <button type="button" onClick={stopAudio} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold">■ Stop audio</button>}
         {notice && <p role="status" aria-live="polite" className="rounded-xl border p-3 text-sm">{notice}</p>}
         {selected && <p className="text-xs text-muted-foreground">Keep BB open and unlocked while recording or listening.</p>}
       </div>

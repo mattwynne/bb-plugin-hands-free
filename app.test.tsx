@@ -14,6 +14,9 @@ it("registers Hands-Free on the existing sidebar route", () => {
   const page = renderSlot(app.navPanels[0]!, { subPath: "" }, { sidebarThreads: { threads: [] } });
   expect(page.getByRole("main", { name: "Hands-Free" })).toBeTruthy();
   expect(page.getByRole("heading", { name: "Hands-Free" })).toBeTruthy();
+  const unselectedControl = page.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement;
+  expect(unselectedControl.disabled).toBe(true);
+  expect(unselectedControl.querySelector('[data-icon="Mic"]')).not.toBeNull();
   page.lifecycle.unmount();
 
   const header = renderSlot(app.threadHeaderActions[0]!, {
@@ -108,15 +111,27 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
   expect(slot.queryByText("Send this reply")).toBeNull();
 
   await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
+  const startControl = slot.getByRole("button", { name: "Start dictating" });
+  expect(startControl.getAttribute("data-control-state")).toBe("start");
+  expect(startControl.className).toContain("size-28");
+  expect(startControl.className).toContain("rounded-full");
+  expect(startControl.className).toContain("bg-foreground");
+  expect(startControl.className).toContain("text-background");
+  expect(startControl.className).toContain("focus-visible:ring-2");
+  expect(startControl.querySelector('[data-icon="Mic"]')).not.toBeNull();
   expect(players).toHaveLength(0); // opening an idle thread is silent
   fireEvent.click(slot.getByRole("button", { name: "Start dictating" }));
-  await waitFor(() => expect(slot!.getByRole("button", { name: "Finish dictating" })).toBeTruthy());
+  await waitFor(() => {
+    const finishControl = slot!.getByRole("button", { name: "Finish dictating" });
+    expect(finishControl.getAttribute("data-control-state")).toBe("complete");
+    expect(finishControl.querySelector('[data-icon="Square"]')).not.toBeNull();
+  });
   expect(players[0]!.src).toBe("blob:tap-cue");
   await act(async () => { fireEvent.click(slot!.getByRole("button", { name: "Finish dictating" })); });
   await waitFor(() => expect(sent).toHaveBeenCalledWith({ threadId: "th_1", text: "Fix the test" }));
   expect(fetchMock).toHaveBeenCalledWith("/api/v1/system/voice-transcription", expect.objectContaining({ method: "POST" }));
 
-  expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((slot.getByRole("button", { name: "Working" }) as HTMLButtonElement).disabled).toBe(true);
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await waitFor(() => expect(speechMode === "stream" ? players[1]?.play : speakDevice).toHaveBeenCalledOnce());
   const cuePlayer = players[0]!;
@@ -125,7 +140,9 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
   expect(cuePlayer.src).toBe("blob:shared-cue");
   expect(cuePlayer.play).toHaveBeenCalledTimes(2); // capture started, finish; no opening cue
   expect(stopTracks).toHaveBeenCalledOnce();
-  expect(slot.getByRole("button", { name: "■ Stop audio" })).toBeTruthy();
+  const playbackControl = slot.getByRole("button", { name: "Stop audio" });
+  expect(playbackControl.getAttribute("data-control-state")).toBe("playback");
+  expect(playbackControl.querySelector('[data-icon="Square"]')?.className).toContain("fill-current");
   expect(slot.queryByText("The test is fixed.")).toBeNull();
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_2", state: "ready", hasReply: true });
   expect(speechMode === "stream" ? player!.play : speakDevice).toHaveBeenCalledOnce();
@@ -209,13 +226,13 @@ it("retains the same local cue player across device replies, Stop, and late spee
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await act(async () => { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(1000); });
   expect(play).toHaveBeenCalledTimes(2);
-  fireEvent.click(slot.getByRole("button", { name: "■ Stop audio" }));
+  fireEvent.click(slot.getByRole("button", { name: "Stop audio" }));
   await act(async () => { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(3000); });
   expect(play).toHaveBeenCalledTimes(2); // a late speech callback cannot revive stopped playback
 
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await act(async () => { utterance!.onend?.(); });
-  fireEvent.click(slot.getByRole("button", { name: "■ Stop audio" }));
+  fireEvent.click(slot.getByRole("button", { name: "Stop audio" }));
   await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
   expect(play).toHaveBeenCalledTimes(2); // Stop also cancels the pending delayed cue
   expect(cuePlayer.removeAttribute).not.toHaveBeenCalled();
@@ -290,7 +307,7 @@ it.each(["end-sync", "end-queued", "silence-sync", "silence-queued", "active-err
           message: "Private detail",
         });
       } else if (mode === "stopped") {
-        fireEvent.click(slot!.getByRole("button", { name: "■ Stop audio" }));
+        fireEvent.click(slot!.getByRole("button", { name: "Stop audio" }));
       } else {
         utterance!.onend?.();
       }
@@ -322,15 +339,20 @@ it("locks the microphone during agent work and unlocks it after a silent idle or
       send: async () => ({ accepted: true }),
     },
   });
-  await waitFor(() => expect(slot!.getByText("Agent thinking…")).toBeTruthy());
-  expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
+  await waitFor(() => expect(slot!.getByRole("status").textContent).toBe("Agent is thinking. Talk is disabled until it finishes."));
+  const workingControl = slot.getByRole("button", { name: "Working" }) as HTMLButtonElement;
+  expect(workingControl.disabled).toBe(true);
+  expect(workingControl.getAttribute("data-control-state")).toBe("working");
+  expect(workingControl.querySelector('[data-icon="Spinner"]')?.className).toContain("animate-spin");
+  expect(workingControl.querySelector('[data-icon="Spinner"]')?.className).toContain("motion-reduce:animate-none");
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "attention" });
-  expect(slot.getByText("Needs attention")).toBeTruthy();
-  expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
+  const attentionControl = slot.getByRole("button", { name: "Needs attention" }) as HTMLButtonElement;
+  expect(attentionControl.disabled).toBe(true);
+  expect(attentionControl.querySelector('[data-icon="AlertTriangle"]')).not.toBeNull();
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: false });
   expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "thinking" });
-  expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((slot.getByRole("button", { name: "Working" }) as HTMLButtonElement).disabled).toBe(true);
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "failed" });
   expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
 });
