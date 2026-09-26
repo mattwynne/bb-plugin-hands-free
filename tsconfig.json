@@ -21,11 +21,7 @@
     "skipLibCheck": false
   },
   "include": [
-    "server.ts",
-    "server.test.ts",
-    "app.test.tsx",
-    "app.tsx",
-    "voice-cues.ts",
-    "voice-cues.test.ts"
+    "*.ts",
+    "*.tsx"
   ]
 }

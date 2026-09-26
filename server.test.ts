@@ -3,6 +3,20 @@ import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/tes
 import plugin from "./server";
 
 describe("voice-drive", () => {
+  it("logs only schema-validated bounded comparison metadata", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "voice-drive" });
+    plugin(bb);
+    const event = { session: "test-session-123", variant: "speech", event: "speech-ended", elapsedMs: 321, sessionType: "auto" };
+    expect(await harness.behavior.callRpc("audioTestDiagnostic", event)).toEqual({ recorded: true });
+    expect(JSON.stringify(harness.logEntries)).toContain("audio-test session=test-session-123 variant=speech event=speech-ended elapsedMs=321 sessionType=auto");
+    await expect(harness.behavior.callRpc("audioTestDiagnostic", { ...event, text: "private reply" })).rejects.toThrow();
+    await expect(harness.behavior.callRpc("audioTestDiagnostic", { ...event, event: "private reply" })).rejects.toThrow();
+    for (let i = 1; i < 120; i++) await harness.behavior.callRpc("audioTestDiagnostic", event);
+    expect(await harness.behavior.callRpc("audioTestDiagnostic", event)).toEqual({ recorded: false });
+    expect(JSON.stringify(harness.logEntries)).not.toContain("private reply");
+    await harness.lifecycle.dispose();
+  });
+
   it("reads only the requested thread and broadcasts an id without content", async () => {
     const output = vi.fn(async () => ({ output: "Private answer" }));
     const { bb, harness } = createFakePluginHost({ pluginId: "voice-drive", sdk: { threads: { output } } });

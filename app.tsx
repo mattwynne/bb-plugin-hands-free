@@ -3,6 +3,7 @@ import { definePluginApp, experimental_useSidebarThreads, useBbNavigate, useReal
 import type { rpcContract } from "./server";
 import { createVoiceCues, type VoiceCues } from "./voice-cues";
 import { createMediaReadyCue, type MediaReadyCue } from "./media-ready-cue";
+import { AudioTestPage } from "./audio-test-page";
 
 // Web Speech is not part of every iOS WebView. Keep the keyboard-dictation
 // path usable when SpeechRecognition is absent or permission is denied.
@@ -476,5 +477,6 @@ function OpenVoiceDrive({ threadId }: { threadId: string }) {
 
 export default definePluginApp((app) => {
   app.slots.navPanel({ id: "drive", title: "Voice Drive", icon: "Mic", path: "drive", component: VoicePage });
+  app.slots.navPanel({ id: "audio-test", title: "Audio test", icon: "Volume2", path: "audio-test", component: AudioTestPage });
   app.slots.experimental_threadHeaderAction({ id: "open-drive", title: "Voice Drive", component: OpenVoiceDrive });
 });

@@ -2,8 +2,30 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createMediaReadyCue, POST_SPEECH_MEDIA_GAIN, readyCueEnvelope } from "./media-ready-cue";
 import { READY_CUE_GAIN } from "./voice-cues";
+import { Blob as NodeBlob } from "node:buffer";
 
 afterEach(() => { vi.unstubAllGlobals(); });
+
+it("allows an unboosted diagnostic WAV without changing the production default", async () => {
+  const blobs: Blob[] = [];
+  vi.stubGlobal("Blob", NodeBlob);
+  vi.stubGlobal("URL", {
+    createObjectURL: (blob: Blob) => { blobs.push(blob); return "blob:test"; },
+    revokeObjectURL: vi.fn(),
+  });
+  vi.stubGlobal("Audio", class { pause() {} removeAttribute() {} load() {} });
+  createMediaReadyCue(READY_CUE_GAIN)?.dispose();
+  createMediaReadyCue()?.dispose();
+  const peaks = await Promise.all(blobs.map(async (blob) => {
+    const view = new DataView(await blob.arrayBuffer());
+    let peak = 0;
+    for (let i = 44; i < view.byteLength; i += 2) peak = Math.max(peak, Math.abs(view.getInt16(i, true)));
+    return peak / 32767;
+  }));
+  expect(peaks[0]).toBeGreaterThan(0.13);
+  expect(peaks[0]).toBeLessThanOrEqual(READY_CUE_GAIN);
+  expect(peaks[1]).toBe(1); // existing 8× production default remains unchanged
+});
 
 it("creates and disposes a local WAV media element without Web Audio", () => {
   const createObjectURL = vi.fn(() => "blob:ready-cue");

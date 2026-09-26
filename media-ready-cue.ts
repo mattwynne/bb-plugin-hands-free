@@ -1,7 +1,7 @@
 import { READY_CUE_GAIN } from "./voice-cues";
 
-// Local PCM WAV used only after device speech. iOS attenuates this media route
-// even after a delay, so compensate here without changing the loud pre-speech cue.
+// Local PCM WAV. Production uses experimental post-speech compensation; the
+// native cause of the quiet output remains unconfirmed. Diagnostics opt out.
 export const POST_SPEECH_MEDIA_GAIN = READY_CUE_GAIN * 8;
 const NOTE_LENGTH = 0.28;
 const FADE_IN = 0.025;
@@ -22,7 +22,8 @@ export interface MediaReadyCue {
   dispose(): void;
 }
 
-export function createMediaReadyCue(): MediaReadyCue | null {
+// The default preserves production behavior; the isolated comparison passes 0.14.
+export function createMediaReadyCue(peakGain = POST_SPEECH_MEDIA_GAIN): MediaReadyCue | null {
   if (typeof Audio === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return null;
   const sampleRate = 16000;
   const duration = 0.54;
@@ -52,7 +53,7 @@ export function createMediaReadyCue(): MediaReadyCue | null {
     for (const [frequency, start] of notes) {
       const local = time - start;
       if (local < 0 || local >= NOTE_LENGTH) continue;
-      const gain = readyCueEnvelope(local) * (POST_SPEECH_MEDIA_GAIN / READY_CUE_GAIN);
+      const gain = readyCueEnvelope(local) * (peakGain / READY_CUE_GAIN);
       sample += Math.sin(2 * Math.PI * frequency * local) * gain;
     }
     view.setInt16(44 + frame * 2, Math.round(Math.max(-1, Math.min(1, sample)) * 0x7fff), true);
