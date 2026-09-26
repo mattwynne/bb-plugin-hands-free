@@ -4,10 +4,11 @@ export interface CueDiagnostic {
   scheduled: boolean;
   audioState: string;
 }
-export type CueLogEvent = "audio-context" | "audio-resume-start" | "audio-resume-result" | "cue-ended";
+export type CueLogEvent = "audio-context" | "audio-resume-start" | "audio-resume-result" | "cue-ended" | "audio-reset";
 export type CueLog = (event: CueLogEvent, audioState: string, elapsedMs?: number) => void;
 export interface VoiceCues {
   unlock(): void;
+  reset(): void;
   ready(): Promise<CueDiagnostic>;
   finished(): void;
   startThinking(): void;
@@ -95,6 +96,15 @@ export function createVoiceCues(report?: CueLog): VoiceCues {
   };
   return {
     unlock() { void activate(); },
+    reset() {
+      if (disposed) return;
+      const old = context;
+      report?.("audio-reset", old?.state ?? "unavailable");
+      context = null;
+      if (old) void old.close().catch(() => {});
+      // The caller can create/play through the new context synchronously in
+      // the same tap gesture; don't await close(), which would lose that gesture.
+    },
     // Deliberately conspicuous diagnostic cue: ~1.3 seconds with a richer
     // triangle waveform. Keep the thinking pulse soft and unchanged.
     ready() { return cue([[523, 0], [659, 0.62]], 0.16, false, 0.7, "triangle"); },

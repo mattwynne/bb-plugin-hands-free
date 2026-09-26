@@ -4,7 +4,7 @@ import { z } from "zod";
 const threadId = z.string().min(1).max(200);
 const diagnosticEvent = z.enum([
   "view-open", "thread-state", "reply-start", "reply-end", "cue-request",
-  "audio-context", "audio-resume-start", "audio-resume-result", "audio-session",
+  "audio-context", "audio-resume-start", "audio-resume-result", "audio-reset",
   "cue-scheduled", "cue-ended", "cue-unavailable", "manual-test", "playback-cleanup",
 ]);
 const diagnosticDetail = z.enum([

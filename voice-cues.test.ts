@@ -43,12 +43,16 @@ it("plays two distinct cues and stops the gentle thinking loop on idle/disposal"
   cues.stopThinking();
   await vi.advanceTimersByTimeAsync(15000);
   expect(frequencies).toHaveLength(count);
-  expect(created).toBe(1);
-  const finalCount = frequencies.length;
-  cues.dispose();
+  cues.reset();
   expect(closed).toBe(1);
+  expect(report).toHaveBeenCalledWith("audio-reset", "running");
+  expect(await cues.ready()).toEqual({ scheduled: true, audioState: "running" });
+  expect(created).toBe(2);
+  const resetCount = frequencies.length;
+  cues.dispose();
+  expect(closed).toBe(2);
   await cues.ready();
-  expect(frequencies).toHaveLength(finalCount);
+  expect(frequencies).toHaveLength(resetCount);
 });
 
 it("resumes an iOS interrupted audio context before playing the ready cue", async () => {

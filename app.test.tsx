@@ -19,8 +19,6 @@ it("sends recorded speech on finish and automatically reads the agent reply", as
   Object.defineProperty(navigator, "mediaDevices", {
     configurable: true, value: { getUserMedia: async () => ({ getTracks: () => [{ stop: stopTracks }] }) },
   });
-  const audioSession = { type: "auto" };
-  Object.defineProperty(navigator, "audioSession", { configurable: true, value: audioSession });
   class FakeRecorder {
     static isTypeSupported() { return true; }
     mimeType = "audio/mp4";
@@ -81,19 +79,17 @@ it("sends recorded speech on finish and automatically reads the agent reply", as
   vi.useFakeTimers();
   await act(async () => { player.onended?.(); });
   expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ event: "reply-end", detail: "media-ended" }));
-  expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ event: "audio-session", detail: "succeeded" }));
-  expect(audioSession.type).toBe("playback");
-  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  await act(async () => { await Promise.resolve(); });
   expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ event: "cue-unavailable", detail: "automatic" }));
   expect(player.pause).not.toHaveBeenCalled(); // don't tear audio down before the ready cue
   await act(async () => { await vi.advanceTimersByTimeAsync(2999); });
   expect(player.pause).not.toHaveBeenCalled();
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
   expect(player.pause).toHaveBeenCalledOnce();
-  audioSession.type = "auto";
   fireEvent.click(slot.getByRole("button", { name: "Test ready tone (diagnostic)" }));
   expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ event: "manual-test", detail: "manual" }));
-  expect(audioSession.type).toBe("playback");
+  fireEvent.click(slot.getByRole("button", { name: "Reset audio & test tone (diagnostic)" }));
+  expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ event: "audio-reset", audioState: "unavailable" }));
 });
 
 it("locks the microphone during agent work and unlocks it after a silent idle or failure", async () => {
