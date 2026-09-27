@@ -68,7 +68,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it.each(["stream", "device"] as const)("reuses the cue player through recording, finish, and a %s reply without breaking capture", async (speechMode) => {
+it("reuses the cue player through recording, finish, and an Edge reply without breaking capture", async () => {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   const createObjectURL = vi.fn().mockReturnValueOnce("blob:shared-cue").mockReturnValueOnce("blob:tap-cue").mockReturnValueOnce("blob:reply-cue");
   vi.stubGlobal("URL", { createObjectURL, revokeObjectURL: vi.fn() });
@@ -102,22 +102,11 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
     load = vi.fn();
   }
   vi.stubGlobal("Audio", FakeAudio);
-  let utterance: FakeUtterance | undefined;
-  class FakeUtterance {
-    lang = "";
-    onend: (() => void) | null = null;
-    onerror: (() => void) | null = null;
-    constructor(public text: string) { utterance = this; }
-  }
-  const speakDevice = vi.fn();
-  vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
-  vi.stubGlobal("speechSynthesis", { speak: speakDevice, cancel: vi.fn(), speaking: false });
-  if (speechMode === "stream") localStorage.setItem("hands-free.voice.v1", JSON.stringify({ voiceId: "edge:en-US-AriaNeural", speed: 1 }));
+  localStorage.setItem("hands-free.voice.v1", JSON.stringify({ voiceId: "edge:en-US-AriaNeural", speed: 1 }));
   const fetchMock = vi.fn(async (input: string) => input.endsWith("/voices")
     ? { ok: true, json: async () => ({ voices: [{ id: "edge:en-US-AriaNeural", name: "Aria", engine: "edge", language: "en-US", available: true }] }) }
     : input.includes("voice-transcription")
     ? { ok: true, json: async () => ({ text: "Fix the test" }) }
-    : speechMode === "device" ? { ok: false, status: 404 }
     : { ok: true, json: async () => ({ audioId: "audio-1", url: "/api/v1/plugins/hands-free/http/speech/audio?id=audio-1", expiresAt: Date.now() + 120000 }) });
   vi.stubGlobal("fetch", fetchMock);
 
@@ -155,15 +144,13 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
 
   expect((slot.getByRole("button", { name: "Working" }) as HTMLButtonElement).disabled).toBe(true);
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
-  await waitFor(() => expect(speechMode === "stream" ? players[1]?.play : speakDevice).toHaveBeenCalledOnce());
-  if (speechMode === "stream") {
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/plugins/hands-free/http/speech/prepare", expect.objectContaining({
-      body: expect.stringContaining('"text":"The test is fixed."'),
-    }));
-  } else expect(utterance!.text).toBe("The test is fixed.");
+  await waitFor(() => expect(players[1]?.play).toHaveBeenCalledOnce());
+  expect(fetchMock).toHaveBeenCalledWith("/api/v1/plugins/hands-free/http/speech/prepare", expect.objectContaining({
+    body: expect.stringContaining('"text":"The test is fixed."'),
+  }));
   const cuePlayer = players[0]!;
   const player = players[1];
-  expect(players).toHaveLength(speechMode === "stream" ? 2 : 1);
+  expect(players).toHaveLength(2);
   expect(cuePlayer.src).toBe("blob:shared-cue");
   expect(cuePlayer.play).toHaveBeenCalledTimes(2); // capture started, finish; no opening cue
   expect(stopTracks).toHaveBeenCalledOnce();
@@ -172,18 +159,17 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
   expect(playbackControl.querySelector('[data-icon="Square"]')?.className).toContain("fill-current");
   expect(slot.queryByText("The test is fixed.")).toBeNull();
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_2", state: "ready", hasReply: true });
-  expect(speechMode === "stream" ? player!.play : speakDevice).toHaveBeenCalledOnce();
+  expect(player!.play).toHaveBeenCalledOnce();
   vi.useFakeTimers();
   await act(async () => {
-    if (speechMode === "stream") player!.onended?.();
-    else { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(1000); }
+    player!.onended?.();
   });
   expect(cuePlayer.play).toHaveBeenCalledTimes(3); // post-reply: distinct source, same player
   expect(cuePlayer.src).toBe("blob:reply-cue");
   expect(createObjectURL).toHaveBeenCalledTimes(3); // cached finish, tap, and reply WAVs
   const pauses = cuePlayer.pause.mock.calls.length;
   if (player) expect(player.pause).not.toHaveBeenCalled();
-  await act(async () => { await vi.advanceTimersByTimeAsync(speechMode === "stream" ? 1199 : 1499); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1199); });
   expect(cuePlayer.pause).toHaveBeenCalledTimes(pauses);
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
   expect(cuePlayer.pause).toHaveBeenCalledTimes(pauses + 1);
@@ -191,171 +177,32 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
   if (player) expect(player.pause).toHaveBeenCalledOnce();
 });
 
-it("retains the same local cue player across device replies, Stop, and late speech callbacks", async () => {
-  const createObjectURL = vi.fn(() => "blob:local-ready-cue");
-  const revokeObjectURL = vi.fn();
-  vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
-  const play = vi.fn(async () => {});
-  const players: FakeAudio[] = [];
-  class FakeAudio {
+it("stops Edge playback without reviving its reply cue from late events", async () => {
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:cue", revokeObjectURL: vi.fn() });
+  const players: Array<{ play: ReturnType<typeof vi.fn>; onended: (() => void) | null }> = [];
+  vi.stubGlobal("Audio", class {
     onended: (() => void) | null = null;
-    onerror: (() => void) | null = null;
-    pause = vi.fn();
-    removeAttribute = vi.fn();
-    load = vi.fn();
+    onerror = null;
+    play = vi.fn(async () => {});
+    pause = vi.fn(); removeAttribute = vi.fn(); load = vi.fn();
     constructor(public src: string) { players.push(this); }
-    play = play;
-  }
-  vi.stubGlobal("Audio", FakeAudio);
-  let utterance: FakeUtterance | null = null;
-  class FakeUtterance {
-    lang = "";
-    onend: (() => void) | null = null;
-    onerror: (() => void) | null = null;
-    constructor(public text: string) { utterance = this; }
-  }
-  vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
-  const cancelSpeech = vi.fn();
-  Object.defineProperty(window, "speechSynthesis", {
-    configurable: true,
-    value: { speak: vi.fn(), cancel: cancelSpeech, speaking: false },
   });
-  vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("Read Aloud unavailable"); }));
-
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/voices")
+    ? { ok: true, json: async () => ({ voices: [{ id: "edge:en-GB-SoniaNeural", name: "Sonia", engine: "edge", language: "en-GB", available: true }] }) }
+    : { ok: true, json: async () => ({ audioId: "a", url: "/api/v1/plugins/hands-free/http/speech/audio?id=a" }) }));
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-    rpc: {
-      state: async () => ({ state: "ready" }),
-      latest: vi.fn().mockResolvedValueOnce({ text: "Device speech reply" })
-        .mockResolvedValueOnce({ text: "Next reply" }).mockResolvedValue({ text: "Final reply" }),
-      send: async () => ({ accepted: true }),
-    },
+    rpc: { state: async () => ({ state: "ready" }), latest: async () => ({ text: "Reply" }) },
   });
-  await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
+  await waitFor(() => expect(slot!.getByRole("status").textContent).toBe("Ready. Tap to talk."));
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
-  await waitFor(() => expect(utterance).not.toBeNull());
-  const priorCancelCalls = cancelSpeech.mock.calls.length;
-  expect(play).not.toHaveBeenCalled(); // no opening cue, and this scenario has no dictation
-  vi.useFakeTimers();
-  await act(async () => { utterance!.onend?.(); });
-  expect(cancelSpeech).toHaveBeenCalledTimes(priorCancelCalls + 1);
-  await act(async () => { await vi.advanceTimersByTimeAsync(999); });
-  expect(play).not.toHaveBeenCalled(); // existing post-speech delay stays unchanged
-  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-  expect(play).toHaveBeenCalledOnce();
-  expect(players).toHaveLength(1);
-  const cuePlayer = players[0]!;
-  expect(cuePlayer.src).toBe("blob:local-ready-cue");
-  expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: "audio/wav" }));
-  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
-  expect(revokeObjectURL).not.toHaveBeenCalled();
-
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
-  await act(async () => { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(1000); });
-  expect(play).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(players[0]?.play).toHaveBeenCalledOnce());
+  const late = players[0]!.onended;
   fireEvent.click(slot.getByRole("button", { name: "Stop audio" }));
-  await act(async () => { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(3000); });
-  expect(play).toHaveBeenCalledTimes(2); // a late speech callback cannot revive stopped playback
-
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
-  await act(async () => { utterance!.onend?.(); });
-  fireEvent.click(slot.getByRole("button", { name: "Stop audio" }));
-  await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
-  expect(play).toHaveBeenCalledTimes(2); // Stop also cancels the pending delayed cue
-  expect(cuePlayer.removeAttribute).not.toHaveBeenCalled();
-  expect(cuePlayer.load).not.toHaveBeenCalled();
+  act(() => late?.());
   expect(players).toHaveLength(1);
-  expect(createObjectURL).toHaveBeenCalledTimes(2); // normal + falling reply; no recording in this scenario
-  slot.lifecycle.unmount();
-  slot = undefined;
-  expect(cuePlayer.removeAttribute).toHaveBeenCalledWith("src");
-  expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+  expect(players[0]!.play).toHaveBeenCalledOnce();
 });
-
-it.each(["end-sync", "end-queued", "silence-sync", "silence-queued", "active-error", "active-interrupted-error", "unknown-error", "speak-sync-error", "stopped"] as const)(
-  "settles device speech once and distinguishes cleanup cancellation from failure: %s", async (mode) => {
-    const play = vi.fn(async () => {});
-    vi.stubGlobal("URL", { createObjectURL: () => "blob:cue", revokeObjectURL: vi.fn() });
-    vi.stubGlobal("Audio", class {
-      play = play;
-      pause() {} removeAttribute() {} load() {}
-    });
-    type SpeechError = { error: string; message?: string };
-    let utterance: FakeUtterance | undefined;
-    let queuedError: ((event: SpeechError) => void) | null = null;
-    class FakeUtterance {
-      lang = "";
-      onstart: (() => void) | null = null;
-      onend: (() => void) | null = null;
-      onerror: ((event: SpeechError) => void) | null = null;
-      constructor(_text: string) { utterance = this; }
-    }
-    let cancellationDelivered = false;
-    const synth = {
-      speaking: false,
-      speak: vi.fn((value: FakeUtterance) => {
-        queuedError = value.onerror;
-        synth.speaking = true;
-        value.onstart?.();
-        if (mode === "speak-sync-error") value.onerror?.({ error: "synthesis-failed" });
-      }),
-      cancel: vi.fn(() => {
-        synth.speaking = false;
-        if (!utterance || cancellationDelivered) return;
-        cancellationDelivered = true;
-        const callback = mode.endsWith("queued") ? queuedError : utterance.onerror;
-        const notify = () => callback?.({ error: "interrupted" });
-        if (mode.endsWith("queued")) queueMicrotask(notify);
-        else notify();
-      }),
-    };
-    vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
-    vi.stubGlobal("speechSynthesis", synth);
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 404 })));
-    slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
-      sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-      rpc: {
-        state: async () => ({ state: "ready" }),
-        latest: async () => ({ text: "Private reply" }),
-      },
-    });
-    await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
-    vi.useFakeTimers();
-    await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
-    expect(synth.speak).toHaveBeenCalledOnce();
-    await act(async () => {
-      if (mode.startsWith("silence")) {
-        await vi.advanceTimersByTimeAsync(300); // observe speech before testing the fallback
-        synth.speaking = false;
-        await vi.advanceTimersByTimeAsync(1200);
-      } else if (mode.startsWith("active-") || mode === "unknown-error") {
-        utterance!.onerror?.({
-          error: mode === "active-error" ? "synthesis-failed" : mode === "active-interrupted-error" ? "interrupted" : "Private error",
-          message: "Private detail",
-        });
-      } else if (mode === "stopped") {
-        fireEvent.click(slot!.getByRole("button", { name: "Stop audio" }));
-      } else {
-        utterance!.onend?.();
-      }
-      await vi.advanceTimersByTimeAsync(3000);
-    });
-    const failure = slot.queryByText("Speech playback failed. Read the reply on screen.");
-    if (mode.endsWith("error")) expect(failure).not.toBeNull();
-    else expect(failure).toBeNull();
-    expect(play).toHaveBeenCalledTimes(mode === "stopped" ? 0 : 1); // no opening/duplicate cues
-    expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
-    // A callback already queued by the browser must be harmless even after detachment.
-    await act(async () => {
-      for (let i = 0; i < 40; i++) queuedError?.({ error: "interrupted", message: "Private detail" });
-      await vi.advanceTimersByTimeAsync(3000);
-    });
-    expect(play).toHaveBeenCalledTimes(mode === "stopped" ? 0 : 1);
-    if (!mode.endsWith("error")) expect(slot.queryByText("Speech playback failed. Read the reply on screen.")).toBeNull();
-    expect(slot.inspection.rpcCalls).toHaveLength(2); // initial state + latest reply only, no diagnostics
-    expect(vi.getTimerCount()).toBe(0);
-  },
-);
 
 it("shows the scrolling indicator during browser recognition and removes it on cancellation", async () => {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
@@ -411,24 +258,21 @@ it("locks the microphone during agent work and unlocks it after a silent idle or
 });
 
 
-it("uses shared settings for replies and never silently downgrades an unavailable selection", async () => {
-  const synth = { speak: vi.fn(), cancel: vi.fn(), getVoices: () => [] };
-  vi.stubGlobal("speechSynthesis", synth);
-  vi.stubGlobal("SpeechSynthesisUtterance", class {});
-  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ voices: [
-    { id: "openai:coral", name: "Coral", engine: "openai", language: "multilingual", available: false, unavailableReason: "API key missing" },
-  ] }) })));
+it("migrates a retired selection for Edge replies", async () => {
+  localStorage.setItem("hands-free.voice.v1", JSON.stringify({ voiceId: "openai:coral", speed: 1.2 }));
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:cue", revokeObjectURL: vi.fn() });
+  const play = vi.fn(async () => {});
+  vi.stubGlobal("Audio", class { play = play; pause() {} removeAttribute() {} load() {} });
+  const fetcher = vi.fn(async (url: string, options?: RequestInit) => url.endsWith("/voices")
+    ? { ok: true, json: async () => ({ voices: [{ id: "edge:en-GB-SoniaNeural", name: "Sonia", engine: "edge", language: "en-GB", available: true }] }) }
+    : { ok: true, json: async () => ({ audioId: "a", url: "/api/v1/plugins/hands-free/http/speech/audio?id=a" }) });
+  vi.stubGlobal("fetch", fetcher);
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
     rpc: { state: async () => ({ state: "ready" }), latest: async () => ({ text: "Hello there" }) },
   });
   await waitFor(() => expect(slot!.getByRole("status").textContent).toBe("Ready. Tap to talk."));
-  act(() => {
-    localStorage.setItem("hands-free.voice.v1", JSON.stringify({ voiceId: "openai:coral", speed: 1.2 }));
-    window.dispatchEvent(new Event("hands-free.voice.v1"));
-  });
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
-  await waitFor(() => expect(slot!.getByRole("status").textContent).toContain("Selected voice unavailable: API key missing"));
-  expect(synth.speak).not.toHaveBeenCalled();
-  expect(slot.getByRole("status").textContent).toContain("Device voice for device fallback");
+  await waitFor(() => expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/speech/prepare"), expect.objectContaining({ body: expect.stringContaining('"voiceId":"edge:en-GB-SoniaNeural"') })));
+  expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/speech/prepare"), expect.objectContaining({ body: expect.stringContaining('"speed":1.2') }));
 });

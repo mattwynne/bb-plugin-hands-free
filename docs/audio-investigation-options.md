@@ -1,3 +1,5 @@
+> Historical research: device/browser speech output discussed below has been retired. Current speech output is Edge neural only. Browser SpeechRecognition remains a transcription fallback. The results below describe past experiments, not current playback behavior.
+
 # iPhone cue-volume investigation: evidence and options
 
 > Historical investigation, now closed. The user accepted the final cues and requested cleanup. The temporary Audio test panel, comparison runner, diagnostic RPCs, and speech trace logging have been removed. The sections below record experiments chronologically, not current operating instructions. Production audio behavior and its regression tests are retained.

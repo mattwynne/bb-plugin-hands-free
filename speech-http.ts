@@ -7,7 +7,7 @@ const MAX_JOBS = 8;
 const MAX_ACTIVE = 2;
 const HEADERS = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
 interface AudioJob { audio: Uint8Array; expiresAt: number }
-export function registerSpeechHttp(bb: BbPluginApi, getKey: () => Promise<string | undefined>, synthesize = synthesizeSpeech) {
+export function registerSpeechHttp(bb: BbPluginApi, synthesize = synthesizeSpeech) {
   const jobs = new Map<string, AudioJob>();
   const active = new Set<AbortController>();
   let disposed = false;
@@ -17,7 +17,7 @@ export function registerSpeechHttp(bb: BbPluginApi, getKey: () => Promise<string
   const clear = () => { jobs.clear(); for (const controller of active) controller.abort(); };
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...HEADERS, "Content-Type": "application/json" } });
 
-  bb.http.route("GET", "/voices", async () => json({ voices: voiceCatalog(Boolean((await getKey())?.trim())) }), { auth: "local" });
+  bb.http.route("GET", "/voices", () => json({ voices: voiceCatalog() }), { auth: "local" });
   bb.http.route("POST", "/speech/prepare", async context => {
     sweep();
     if (disposed || active.size >= MAX_ACTIVE || jobs.size + active.size >= MAX_JOBS) return json({ error: "Speech is busy. Try again shortly.", code: "busy" }, 429);
@@ -37,9 +37,8 @@ export function registerSpeechHttp(bb: BbPluginApi, getKey: () => Promise<string
       const parsed = speechInput.safeParse(body);
       if (!parsed.success) throw new SpeechError("invalid_input", "Expected text (1–4096 characters), voiceId, and speed (0.5–2).", 400);
       clearTimeout(inputTimer);
-      const key = await getKey();
-      validateVoice(parsed.data, key);
-      const audio = await synthesize(parsed.data, key, controller.signal);
+      validateVoice(parsed.data);
+      const audio = await synthesize(parsed.data, controller.signal);
       if (controller.signal.aborted || disposed) throw new SpeechError("aborted", "Speech synthesis cancelled.", 400);
       const audioId = randomUUID();
       const expiresAt = Date.now() + TTL_MS;

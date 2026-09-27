@@ -5,7 +5,7 @@
 Hands-Free’s prepare/play pattern and neural voice support were inspired by
 [Chris Sells’ Read Aloud](https://github.com/csells/bb-plugins/tree/HEAD/plugins/read-aloud).
 `speech-edge.ts` adapts protocol helpers and WebSocket framing from its `synth.ts`.
-The bounded collector, cancellation, catalog and OpenAI integration are Hands-Free additions.
+The bounded collector, cancellation, and catalog are Hands-Free additions.
 The applicable upstream repository license is reproduced in full below.
 
 MIT License

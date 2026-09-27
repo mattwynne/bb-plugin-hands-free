@@ -1,3 +1,5 @@
+> Historical implementation notes below describe the retired device/OpenAI output design. Current speech output is Edge-only; Sonia is the default, and saved device/OpenAI selections migrate to Sonia while retaining speed. Microphone/browser SpeechRecognition transcription is unchanged. Preview and speed remain in the unified settings picker. No API key is needed.
+
 # Hands-Free voice settings
 
 ## Requirements

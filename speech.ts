@@ -10,25 +10,20 @@ export const speechInput = z.object({
 }).strict();
 export type SpeechInput = z.infer<typeof speechInput>;
 export interface Voice {
-  id: string; name: string; engine: "edge" | "openai"; language: string;
+  id: string; name: string; engine: "edge"; language: string;
   available: boolean; unavailableReason?: string;
 }
-export const MISSING_KEY_REASON = "Add an OpenAI API key in Hands-Free plugin settings. BB does not expose configured credentials or TTS through the public SDK.";
+export { DEFAULT_VOICE_ID } from "./voice-default";
 const EDGE_VOICES = ["en-US-AriaNeural", "en-US-GuyNeural", "en-GB-SoniaNeural", "en-GB-RyanNeural"];
-const OPENAI_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse", "marin", "cedar"];
-export function voiceCatalog(hasOpenAIKey: boolean): Voice[] {
-  return [
-    ...EDGE_VOICES.map((name): Voice => ({ id: `edge:${name}`, name, engine: "edge", language: name.slice(0, 5), available: true })),
-    ...OPENAI_VOICES.map((name): Voice => ({ id: `openai:${name}`, name: name[0]!.toUpperCase() + name.slice(1), engine: "openai", language: "multilingual", available: hasOpenAIKey, ...(!hasOpenAIKey ? { unavailableReason: MISSING_KEY_REASON } : {}) })),
-  ];
+export function voiceCatalog(): Voice[] {
+  return EDGE_VOICES.map((name): Voice => ({ id: `edge:${name}`, name, engine: "edge", language: name.slice(0, 5), available: true }));
 }
 export class SpeechError extends Error {
-  constructor(public code: string, message: string, public status: 400 | 409 | 429 | 502 | 504 = 502) { super(message); }
+  constructor(public code: string, message: string, public status: 400 | 429 | 502 | 504 = 502) { super(message); }
 }
-export function validateVoice(input: SpeechInput, key?: string): Voice {
-  const voice = voiceCatalog(Boolean(key?.trim())).find(v => v.id === input.voiceId);
+export function validateVoice(input: SpeechInput): Voice {
+  const voice = voiceCatalog().find(v => v.id === input.voiceId);
   if (!voice) throw new SpeechError("invalid_voice", "Unknown voice.", 400);
-  if (!voice.available) throw new SpeechError("unavailable", MISSING_KEY_REASON, 409);
   return voice;
 }
 
@@ -60,33 +55,18 @@ export async function readBounded(body: ReadableStream<Uint8Array>, max: number,
   }
 }
 export interface SpeechDependencies {
-  fetch?: typeof fetch;
   edge?: typeof synthesizeEdge;
   timeoutMs?: number;
 }
 /** No upstream response text/errors are exposed: they can contain credentials or input. */
-export async function synthesizeSpeech(input: SpeechInput, key: string | undefined, signal: AbortSignal, dependencies: SpeechDependencies = {}): Promise<Uint8Array> {
-  const voice = validateVoice(input, key);
+export async function synthesizeSpeech(input: SpeechInput, signal: AbortSignal, dependencies: SpeechDependencies = {}): Promise<Uint8Array> {
+  validateVoice(input);
   const timeout = new AbortController();
   const combined = AbortSignal.any([signal, timeout.signal]);
   const timer = setTimeout(() => timeout.abort(), dependencies.timeoutMs ?? SYNTHESIS_TIMEOUT_MS);
   try {
     combined.throwIfAborted();
-    let audio: Uint8Array;
-    if (voice.engine === "edge") {
-      audio = await (dependencies.edge ?? synthesizeEdge)({ text: input.text, voice: input.voiceId.slice(5), speed: input.speed, signal: combined, maxBytes: MAX_AUDIO_BYTES });
-    } else {
-      const response = await (dependencies.fetch ?? fetch)("https://api.openai.com/v1/audio/speech", {
-        method: "POST", redirect: "error", signal: combined,
-        headers: { "Authorization": `Bearer ${key!.trim()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "gpt-4o-mini-tts", voice: input.voiceId.slice(7), input: input.text, speed: input.speed, response_format: "mp3" }),
-      });
-      if (!response.ok || !response.body) {
-        await response.body?.cancel();
-        throw new SpeechError("upstream", "OpenAI speech failed. Check the API key, billing and service availability.");
-      }
-      audio = await readBounded(response.body, MAX_AUDIO_BYTES, combined);
-    }
+    const audio = await (dependencies.edge ?? synthesizeEdge)({ text: input.text, voice: input.voiceId.slice(5), speed: input.speed, signal: combined, maxBytes: MAX_AUDIO_BYTES });
     combined.throwIfAborted();
     if (audio.byteLength === 0 || audio.byteLength > MAX_AUDIO_BYTES) throw new SpeechError("invalid_audio", "Speech service returned invalid audio.");
     return audio;

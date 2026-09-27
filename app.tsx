@@ -53,7 +53,6 @@ function HandsFreePage({ subPath }: { subPath: string }) {
   const recordingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
   const playbackCleanupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const speechMonitor = useRef<ReturnType<typeof setInterval> | null>(null);
   const sequence = useRef(0);
   const captureGeneration = useRef(0);
   const sending = useRef(false);
@@ -84,9 +83,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     if (speechId.current) releaseSpeech(speechId.current);
     speechId.current = null;
     if (playbackCleanupTimer.current !== null) clearTimeout(playbackCleanupTimer.current);
-    if (speechMonitor.current !== null) clearInterval(speechMonitor.current);
     playbackCleanupTimer.current = null;
-    speechMonitor.current = null;
     if (audio.current) {
       audio.current.pause();
       audio.current.removeAttribute("src");
@@ -94,11 +91,10 @@ function HandsFreePage({ subPath }: { subPath: string }) {
       audio.current = null;
     }
     cues.current?.stopCue(); // stop playback, but keep the already-used cue player
-    window.speechSynthesis?.cancel();
     setSpeaking(false);
   }, []);
 
-  const finishPlayback = useCallback((deviceSpeech = false) => {
+  const finishPlayback = useCallback(() => {
     if (!active.current || phaseRef.current !== "ready") { stopAudio(); return; }
     if (playbackCleanupTimer.current !== null) return;
     const mine = sequence.current;
@@ -112,17 +108,11 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         }
       });
     };
-    if (deviceSpeech) {
-      // Keep the established device-speech cleanup and gap before the reply cue.
-      window.speechSynthesis?.cancel();
-      window.setTimeout(playReadyCue, 1000);
-    } else {
-      playReadyCue();
-    }
+    playReadyCue();
     playbackCleanupTimer.current = setTimeout(() => {
       playbackCleanupTimer.current = null;
       if (mine === sequence.current) stopAudio();
-    }, deviceSpeech ? 2500 : 1200);
+    }, 1200);
   }, [stopAudio]);
   const cancelCapture = useCallback(() => {
     captureGeneration.current += 1;
@@ -150,13 +140,12 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     const mine = sequence.current;
     const { selectedVoice, speed } = voiceRef.current;
     if (!selectedVoice.available) {
-      setNotice(`Selected voice unavailable: ${selectedVoice.unavailableReason || "Provider unavailable"}. Choose a Device voice for device fallback.`);
+      setNotice(`Selected voice unavailable: ${selectedVoice.unavailableReason || "Provider unavailable"}. Choose another Edge voice.`);
       return;
     }
     setSpeaking(true);
     setNotice("Preparing audio…");
     try {
-      if (selectedVoice.engine === "device") throw new Error("device");
       const controller = new AbortController();
       speechRequest.current = controller;
       const data = await prepareSpeech(text, selectedVoice.id, speed, controller.signal);
@@ -176,50 +165,8 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         audio.current.load();
         audio.current = null;
       }
-      // Never silently change providers. Device fallback is an explicit picker choice.
-      if (selectedVoice.engine !== "device") {
-        stopAudio();
-        setNotice(`${error instanceof Error ? error.message : "Speech playback failed"}. Choose a Device voice for device fallback.`);
-        return;
-      }
-      if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
-        finishPlayback(); setNotice("Speech playback is unavailable. Review the reply on screen.");
-        return;
-      }
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.voice = selectedVoice.deviceVoice ?? null;
-      utterance.lang = selectedVoice.language || navigator.language || "en-US";
-      utterance.rate = speed;
-      let completed = false;
-      const stopMonitoring = () => {
-        if (speechMonitor.current !== null) clearInterval(speechMonitor.current);
-        speechMonitor.current = null;
-      };
-      const completeSpeech = (failed = false) => {
-        if (completed || mine !== sequence.current) return;
-        completed = true; // latch BEFORE finishPlayback can call speechSynthesis.cancel()
-        stopMonitoring();
-        utterance.onend = utterance.onerror = null;
-        finishPlayback(true);
-        if (failed) setNotice("Speech playback failed. Read the reply on screen.");
-      };
-      utterance.onend = () => completeSpeech();
-      utterance.onerror = () => completeSpeech(true);
-      try { window.speechSynthesis.speak(utterance); }
-      catch { completeSpeech(true); }
-      // A synchronous terminal callback must not install a new monitor or
-      // overwrite a genuine failure notice when speak() returns.
-      if (completed || mine !== sequence.current) return;
-      // Some iOS WebViews omit utterance.onend. Once speech has actually
-      // started, four consecutive silent checks are a fallback completion.
-      let heardSpeech = false;
-      let silentChecks = 0;
-      speechMonitor.current = setInterval(() => {
-        if (mine !== sequence.current) { stopMonitoring(); return; }
-        if (window.speechSynthesis.speaking) { heardSpeech = true; silentChecks = 0; }
-        else if (heardSpeech && ++silentChecks >= 4) completeSpeech();
-      }, 300);
-      setNotice(`Reading with ${voiceLabel(selectedVoice)} (device voice).`);
+      stopAudio();
+      setNotice(`${error instanceof Error ? error.message : "Speech playback failed"}. Try again or choose another Edge voice.`);
     }
   }, [stopAudio, finishPlayback]);
 

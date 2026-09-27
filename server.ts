@@ -19,16 +19,7 @@ export const rpcContract = defineRpcContract({
 });
 
 export default function plugin(bb: BbPluginApi) {
-  // Public SDK 0.4.87 exposes transcription/inference, not TTS or configured
-  // provider credentials. This plugin-owned secret is the supported fallback.
-  const settings = bb.settings.define({
-    openaiApiKey: {
-      type: "string", label: "OpenAI speech API key", secret: true,
-      description: "Optional: enables OpenAI voices (billed by OpenAI). BB's public SDK cannot reuse configured provider credentials or synthesize speech. Edge voices need no key.",
-    },
-  });
-  const speech = registerSpeechHttp(bb, async () => (await settings.get()).openaiApiKey);
-  settings.onChange(() => speech.clear());
+  registerSpeechHttp(bb);
   bb.rpc.register(rpcContract, {
     latest: async ({ threadId }) => {
       const result = await bb.sdk.threads.output({ threadId });

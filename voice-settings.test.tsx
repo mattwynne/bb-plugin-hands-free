@@ -5,53 +5,32 @@ import { VoiceSettingsPage, VOICE_STORAGE, readVoiceSettings } from "./voice-set
 import { prepareSpeech, VOICE_API } from "./voice-client";
 
 const cloud = [
+  { id: "edge:en-GB-SoniaNeural", name: "Sonia", engine: "edge", language: "en-GB", available: true },
   { id: "edge:en-US-AriaNeural", name: "Aria", engine: "edge", language: "en-US", available: true },
-  { id: "openai:coral", name: "Coral", engine: "openai", language: "multilingual", available: false, unavailableReason: "Add an API key in plugin settings" },
 ];
 function setup() {
-  const events = new EventTarget();
-  const synth = { getVoices: vi.fn(() => [] as SpeechSynthesisVoice[]), speak: vi.fn(), cancel: vi.fn(),
-    addEventListener: vi.fn(events.addEventListener.bind(events)), removeEventListener: vi.fn(events.removeEventListener.bind(events)) };
-  vi.stubGlobal("speechSynthesis", synth);
-  class Utterance { constructor(public text: string) {} }
-  vi.stubGlobal("SpeechSynthesisUtterance", Utterance);
   const fetcher = vi.fn(async (url: string, _options?: RequestInit) => ({ ok: true, json: async () => url.endsWith("/voices") ? { voices: cloud } : { audioId: "a", url: `${VOICE_API}/speech/audio?id=a` } }));
   vi.stubGlobal("fetch", fetcher);
-  return { synth, events, fetcher };
+  return { fetcher };
 }
 afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it("keeps unavailable saved voices visible and disabled without overwriting preference", async () => {
-  setup(); localStorage.setItem(VOICE_STORAGE, JSON.stringify({ voiceId: "openai:coral", speed: 1.3 }));
+it.each(["device:default", "device:samantha", "openai:coral"])('migrates retired voice %s to Sonia, keeping speed', async voiceId => {
+  setup(); localStorage.setItem(VOICE_STORAGE, JSON.stringify({ voiceId, speed: 1.3 }));
+  expect(readVoiceSettings()).toEqual({ voiceId: cloud[0]!.id, speed: 1.3 });
   const page = render(<VoiceSettingsPage />);
-  const option = await page.findByRole("option", { name: /Coral — OpenAI.*Unavailable: Add an API key/ });
-  expect((option as HTMLOptionElement).disabled).toBe(true);
-  expect((page.getByRole("button", { name: "Preview voice" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(page.getByText(/your saved selection has not been changed/)).toBeTruthy();
-  expect(readVoiceSettings()).toEqual({ voiceId: "openai:coral", speed: 1.3 });
-  expect(page.getAllByRole("combobox")).toHaveLength(1);
+  await page.findByRole("option", { name: /Aria/ });
+  expect((page.getByRole("combobox") as HTMLSelectElement).value).toBe(cloud[0]!.id);
+  expect(JSON.parse(localStorage.getItem(VOICE_STORAGE)!)).toEqual({ voiceId: cloud[0]!.id, speed: 1.3 });
+  expect(page.getAllByRole("option")).toHaveLength(2);
 });
 
-it("loads device voices asynchronously, previews the selected voice and speed, and cleans listeners/speech", async () => {
-  const { synth, events } = setup();
+it("keeps an unavailable saved Edge voice visible without changing it", async () => {
+  setup(); localStorage.setItem(VOICE_STORAGE, JSON.stringify({ voiceId: "edge:retired", speed: 1.3 }));
   const page = render(<VoiceSettingsPage />);
-  const device = { voiceURI: "samantha", name: "Samantha", lang: "en-US" } as SpeechSynthesisVoice;
-  synth.getVoices.mockReturnValue([device]);
-  act(() => { events.dispatchEvent(new Event("voiceschanged")); });
-  fireEvent.change(page.getByRole("combobox"), { target: { value: "device:samantha" } });
-  fireEvent.change(page.getByRole("slider"), { target: { value: "1.4" } });
-  fireEvent.click(page.getByRole("button", { name: "Preview voice" }));
-  expect(synth.speak).toHaveBeenCalledWith(expect.objectContaining({ voice: device, rate: 1.4 }));
-  expect(readVoiceSettings()).toEqual({ voiceId: "device:samantha", speed: 1.4 });
-  page.unmount();
-  expect(synth.cancel).toHaveBeenCalled();
-  expect(synth.removeEventListener).toHaveBeenCalledWith("voiceschanged", expect.any(Function));
-  const again = render(<VoiceSettingsPage />);
-  expect((again.getByRole("combobox") as HTMLSelectElement).value).toBe("device:samantha");
-  synth.getVoices.mockReturnValue([]);
-  act(() => { events.dispatchEvent(new Event("voiceschanged")); });
-  expect((again.getByRole("option", { name: /samantha.*Unavailable/ }) as HTMLOptionElement).disabled).toBe(true);
-  expect(readVoiceSettings().voiceId).toBe("device:samantha");
+  const option = await page.findByRole("option", { name: /retired.*Unavailable/ });
+  expect((option as HTMLOptionElement).disabled).toBe(true);
+  expect(readVoiceSettings()).toEqual({ voiceId: "edge:retired", speed: 1.3 });
 });
 
 it("previews cloud selection, forwards speed, and releases audio on stop", async () => {
@@ -88,20 +67,19 @@ it("aborts in-flight preview and releases late responses without playing after u
 });
 
 it("does not silently downgrade failed cloud preview", async () => {
-  const { synth, fetcher } = setup();
+  const { fetcher } = setup();
   const page = render(<VoiceSettingsPage />);
   await page.findByRole("option", { name: /Aria/ });
   fireEvent.change(page.getByRole("combobox"), { target: { value: cloud[0]!.id } });
   fetcher.mockRejectedValueOnce(new Error("offline"));
   fireEvent.click(page.getByRole("button", { name: "Preview voice" }));
-  await page.findByText(/offline. No device fallback was used/);
-  expect(synth.speak).not.toHaveBeenCalled();
+  await page.findByText(/offline. Try again or choose another Edge voice/);
   expect(readVoiceSettings().voiceId).toBe(cloud[0]!.id);
 });
 
 it("validates persisted settings and rejects external stream URLs", async () => {
   setup(); localStorage.setItem(VOICE_STORAGE, '{"speed":99,"voiceId":5}');
-  expect(readVoiceSettings()).toEqual({ voiceId: "device:default", speed: 1 });
+  expect(readVoiceSettings()).toEqual({ voiceId: cloud[0]!.id, speed: 1 });
   vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ audioId: "a", url: "https://other.example/audio" }) })));
-  await expect(prepareSpeech("hello", "openai:coral", 1, new AbortController().signal)).rejects.toThrow("Invalid speech response");
+  await expect(prepareSpeech("hello", cloud[0]!.id, 1, new AbortController().signal)).rejects.toThrow("Invalid speech response");
 });
