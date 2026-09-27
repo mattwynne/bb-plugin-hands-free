@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { definePluginApp, experimental_Icon as Icon, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import { createVoiceCues, type VoiceCues } from "./voice-cues";
+import { RecordingWaveform } from "./recording-waveform";
 
 // Web Speech is not part of every iOS WebView. Keep the keyboard-dictation
 // path usable when SpeechRecognition is absent or permission is denied.
@@ -33,6 +34,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
   const [showFallback, setShowFallback] = useState(false);
   const [retryText, setRetryText] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
+  const [waveformStream, setWaveformStream] = useState<MediaStream | null>(null);
   const [busy, setBusy] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [phase, setPhase] = useState<"loading" | "ready" | "thinking" | "attention">("loading");
@@ -121,6 +123,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     if (recordingTimer.current) clearTimeout(recordingTimer.current);
     recordingTimer.current = null;
     setListening(false);
+    setWaveformStream(null);
     setBusy(false);
   }, []);
 
@@ -340,6 +343,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
       if (recognition.current !== instance) return; // cancelled or changed thread
       recognition.current = null;
       setListening(false);
+      setWaveformStream(null);
       if (!failed && recognized) void sendText(recognized, owner);
       else { setBusy(false); if (!failed) setNotice("No words heard. Tap to talk and try again."); }
     };
@@ -386,6 +390,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         recordingStream.current = null;
         recorder.current = null;
         setListening(false);
+        setWaveformStream(null);
         if (capture !== captureGeneration.current || selectedRef.current !== owner) return;
         if (recordingFailed) { setBusy(false); return; }
         const blob = new Blob(chunks, { type: instance.mimeType || "audio/mp4" });
@@ -412,10 +417,11 @@ function HandsFreePage({ subPath }: { subPath: string }) {
       instance.start();
       cues.current?.started();
       setBusy(false);
+      setWaveformStream(stream);
       setListening(true);
       setNotice("Recording. Tap Finish dictating; recording ends automatically after one minute.");
       recordingTimer.current = setTimeout(() => {
-        if (instance.state === "recording") { cues.current?.finished(); setBusy(true); instance.stop(); }
+        if (instance.state === "recording") { cues.current?.finished(); setBusy(true); setListening(false); setWaveformStream(null); instance.stop(); }
       }, 60000);
     } catch {
       if (capture === captureGeneration.current) {
@@ -432,6 +438,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     if (recorder.current?.state === "recording") recorder.current.stop();
     else recognition.current?.stop();
     setListening(false);
+    setWaveformStream(null);
   };
   const controlState = !selected
     ? "start"
@@ -476,9 +483,10 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         {selectedId && !selected && threadsStatus !== "loading" && <p role="alert">Thread not in the current list. Select another thread.</p>}
         <div className="flex justify-center py-2">
           <button type="button" disabled={controlDisabled} onClick={speaking ? stopAudio : listening ? stopListening : startListening}
-            className="inline-flex size-28 shrink-0 cursor-pointer items-center justify-center rounded-full bg-foreground text-background transition-colors duration-150 hover:bg-foreground/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-40"
+            className="inline-flex size-28 shrink-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-full bg-foreground text-background transition-colors duration-150 hover:bg-foreground/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-40"
             aria-pressed={listening} aria-label={controlLabel} data-control-state={controlState}>
             <Icon name={controlIcon} className={`size-9 ${controlState === "working" ? "animate-spin motion-reduce:animate-none" : controlState === "complete" || controlState === "playback" ? "fill-current [&_*]:stroke-0" : ""}`} aria-hidden />
+            {listening && <RecordingWaveform stream={waveformStream} />}
           </button>
         </div>
         {retryText && <button type="button" disabled={busy || phase !== "ready"} onClick={() => void sendText(retryText, selectedId)} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">Retry sending</button>}

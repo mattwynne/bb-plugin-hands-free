@@ -50,9 +50,11 @@ afterEach(() => {
   slot = undefined;
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 it.each(["stream", "device"] as const)("reuses the cue player through recording, finish, and a %s reply without breaking capture", async (speechMode) => {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   const createObjectURL = vi.fn().mockReturnValueOnce("blob:shared-cue").mockReturnValueOnce("blob:tap-cue").mockReturnValueOnce("blob:reply-cue");
   vi.stubGlobal("URL", { createObjectURL, revokeObjectURL: vi.fn() });
   const stopTracks = vi.fn();
@@ -125,9 +127,11 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
     const finishControl = slot!.getByRole("button", { name: "Finish dictating" });
     expect(finishControl.getAttribute("data-control-state")).toBe("complete");
     expect(finishControl.querySelector('[data-icon="Square"]')).not.toBeNull();
+    expect(finishControl.querySelector("canvas[aria-hidden]")).not.toBeNull();
   });
   expect(players[0]!.src).toBe("blob:tap-cue");
   await act(async () => { fireEvent.click(slot!.getByRole("button", { name: "Finish dictating" })); });
+  expect(slot.container.querySelector("canvas")).toBeNull();
   await waitFor(() => expect(sent).toHaveBeenCalledWith({ threadId: "th_1", text: "Fix the test" }));
   expect(fetchMock).toHaveBeenCalledWith("/api/v1/system/voice-transcription", expect.objectContaining({ method: "POST" }));
 
@@ -329,6 +333,30 @@ it.each(["end-sync", "end-queued", "silence-sync", "silence-queued", "active-err
     expect(vi.getTimerCount()).toBe(0);
   },
 );
+
+it("shows the scrolling indicator during browser recognition and removes it on cancellation", async () => {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:cue", revokeObjectURL: vi.fn() });
+  vi.stubGlobal("Audio", class { play = vi.fn(async () => {}); pause() {} removeAttribute() {} load() {} });
+  Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: undefined });
+  const abort = vi.fn();
+  class FakeRecognition {
+    lang = ""; interimResults = false; continuous = false;
+    onresult = null; onerror = null; onend = null;
+    start = vi.fn(); stop = vi.fn(); abort = abort;
+  }
+  vi.stubGlobal("SpeechRecognition", FakeRecognition);
+  slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
+    sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
+    rpc: { state: async () => ({ state: "ready" }) },
+  });
+  await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(slot.getByRole("button", { name: "Start dictating" }));
+  expect(slot.getByRole("button", { name: "Finish dictating" }).querySelector("canvas")).not.toBeNull();
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "thinking" });
+  expect(abort).toHaveBeenCalledOnce();
+  expect(slot.container.querySelector("canvas")).toBeNull();
+});
 
 it("locks the microphone during agent work and unlocks it after a silent idle or failure", async () => {
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
