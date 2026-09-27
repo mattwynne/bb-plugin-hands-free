@@ -502,6 +502,10 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         </div>}
         {notice && <p role="status" aria-live="polite" className="rounded-xl border p-3 text-sm">{notice}</p>}
         {selected && <section aria-label="Thread activity" className="rounded-xl border">
+          <button type="button" onClick={() => navigate.toThread(selectedId)} className="flex min-h-12 w-full items-center justify-between gap-3 rounded-t-xl border-b px-3 py-2 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <span className="min-w-0 break-words font-semibold underline underline-offset-4">{selected.title || selected.titleFallback || selected.id}</span>
+            <span className="shrink-0 text-muted-foreground">Open thread <span aria-hidden="true">↗</span></span>
+          </button>
           <button type="button" aria-expanded={showActivity} aria-controls="hands-free-activity" onClick={() => setShowActivity((value) => !value)} className="flex min-h-12 w-full items-center justify-between px-3 text-left text-sm font-semibold">
             Thread activity <span aria-hidden="true">{showActivity ? "▾" : "▸"}</span>
           </button>

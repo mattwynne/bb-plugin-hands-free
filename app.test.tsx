@@ -33,6 +33,7 @@ it("keeps page guidance concise and relevant to the selected thread", async () =
   expect(page.getByRole("status").textContent).toBe("Choose a thread to begin.");
   expect(page.queryByText("Keep BB open and unlocked while recording or listening.")).toBeNull();
   expect(page.queryByText(/tone confirms recording/i)).toBeNull();
+  expect(page.queryByRole("button", { name: /Open thread/ })).toBeNull();
   page.lifecycle.unmount();
 
   const selectedPage = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
@@ -49,6 +50,9 @@ it("keeps page guidance concise and relevant to the selected thread", async () =
   expect(activity.dataset).toMatchObject({ threadId: "th_1", variant: "timeline", layout: "document" });
   fireEvent.click(selectedPage.getByRole("button", { name: "Thread activity" }));
   expect(selectedPage.queryByTestId("bb-thread-chat")).toBeNull();
+  fireEvent.click(selectedPage.getByRole("button", { name: "My thread Open thread" }));
+  expect(selectedPage.inspection.navigateCalls).toEqual([{ method: "toThread", threadId: "th_1" }]);
+  expect(selectedPage.getByRole("button", { name: "Thread activity" }).getAttribute("aria-expanded")).toBe("false");
   selectedPage.lifecycle.unmount();
 });
 let slot: ReturnType<typeof renderSlot> | undefined;
