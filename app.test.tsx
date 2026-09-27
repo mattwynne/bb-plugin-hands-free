@@ -7,7 +7,8 @@ import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 const app = await loadPluginApp(() => import("./app"));
 it("registers Hands-Free on the existing sidebar route", () => {
   expect(app.settingsSections).toHaveLength(1);
-  expect(app.settingsSections[0]).toMatchObject({ id: "voice", title: "Voice" });
+  expect(app.settingsSections[0]).toMatchObject({ id: "voice" });
+  expect(app.settingsSections[0]?.title).toBeUndefined(); // Avoid a duplicate Voice heading.
   expect(app.navPanels).toHaveLength(1);
   expect(app.navPanels[0]).toMatchObject({ id: "hands-free", path: "hands-free", title: "Hands-Free" });
   expect(app.threadHeaderActions).toHaveLength(1);
@@ -16,6 +17,9 @@ it("registers Hands-Free on the existing sidebar route", () => {
   const page = renderSlot(app.navPanels[0]!, { subPath: "" }, { sidebarThreads: { threads: [] } });
   expect(page.getByRole("main", { name: "Hands-Free" })).toBeTruthy();
   expect(page.getByRole("heading", { name: "Hands-Free" })).toBeTruthy();
+  const settingsLink = page.getByRole("link", { name: "Hands-Free settings" });
+  expect(settingsLink.getAttribute("href")).toBe("/settings/plugins/hands-free");
+  expect(settingsLink.querySelector('[data-icon="Settings"]')).not.toBeNull();
   expect(page.queryByRole("combobox", { name: "Voice" })).toBeNull();
   const unselectedControl = page.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement;
   expect(unselectedControl.disabled).toBe(true);

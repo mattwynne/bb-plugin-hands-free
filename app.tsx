@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { definePluginApp, experimental_Icon as Icon, experimental_useSidebarThreads, ThreadChat, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, experimental_Icon as Icon, experimental_useSidebarThreads, ThreadChat, UrlLink, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import { createVoiceCues, type VoiceCues } from "./voice-cues";
 import { RecordingWaveform } from "./recording-waveform";
@@ -440,7 +440,12 @@ function HandsFreePage({ subPath }: { subPath: string }) {
   return (
     <main className="h-full min-h-0 overflow-y-auto px-4 py-5" aria-label="Hands-Free">
       <div className="mx-auto max-w-xl space-y-5 pb-12">
-        <h1 className="text-2xl font-bold">Hands-Free</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold">Hands-Free</h1>
+          <UrlLink href="/settings/plugins/hands-free" aria-label="Hands-Free settings" title="Voice settings" className="inline-flex size-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Icon name="Settings" className="size-5" aria-hidden />
+          </UrlLink>
+        </div>
         <label className="block text-base font-semibold" htmlFor="hands-free-thread">Thread</label>
         <select id="hands-free-thread" className="w-full min-h-14 rounded-xl border bg-background px-3 text-base" value={selectedId} onChange={(event) => navigate.toPluginPanel("hands-free", { subPath: encodeURIComponent(event.target.value) })}>
           <option value="">Choose a thread</option>
@@ -492,7 +497,7 @@ function OpenHandsFree({ threadId }: { threadId: string }) {
 }
 
 export default definePluginApp((app) => {
-  app.slots.settingsSection({ id: "voice", title: "Voice", component: VoiceSettingsPage });
+  app.slots.settingsSection({ id: "voice", component: VoiceSettingsPage });
   app.slots.navPanel({ id: "hands-free", title: "Hands-Free", icon: "Mic", path: "hands-free", component: HandsFreePage });
   app.slots.experimental_threadHeaderAction({ id: "open-hands-free", title: "Hands-Free", component: OpenHandsFree });
 });

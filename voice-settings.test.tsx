@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
-import { VoiceSettingsPage, VOICE_STORAGE, readVoiceSettings } from "./voice-settings";
+import { installTestPluginRuntime } from "@get-bb/plugin-sdk/testing/app";
+installTestPluginRuntime();
+const { VoiceSettingsPage, VOICE_STORAGE, readVoiceSettings, voiceLabel } = await import("./voice-settings");
 import { prepareSpeech, VOICE_API } from "./voice-client";
 
 const cloud = [
@@ -44,7 +46,7 @@ it("previews cloud selection, forwards speed, and releases audio on stop", async
   fireEvent.click(page.getByRole("button", { name: "Preview voice" }));
   await waitFor(() => expect(audio.play).toHaveBeenCalled());
   expect(fetcher).toHaveBeenCalledWith(`${VOICE_API}/speech/prepare`, expect.objectContaining({ body: expect.stringContaining('"speed":0.8') }));
-  fireEvent.click(page.getByRole("button", { name: "Stop preview / audio" }));
+  fireEvent.click(page.getByRole("button", { name: "Stop preview" }));
   expect(audio.pause).toHaveBeenCalled();
   expect(fetcher).toHaveBeenCalledWith(`${VOICE_API}/speech/audio?id=a`, expect.objectContaining({ method: "DELETE" }));
 });
@@ -75,6 +77,11 @@ it("does not silently downgrade failed cloud preview", async () => {
   fireEvent.click(page.getByRole("button", { name: "Preview voice" }));
   await page.findByText(/offline. Try again or choose another Edge voice/);
   expect(readVoiceSettings().voiceId).toBe(cloud[0]!.id);
+});
+
+it("uses human-readable names without repeating the engine or locale", () => {
+  expect(voiceLabel({ id: "edge:en-GB-RyanNeural", name: "en-GB-RyanNeural", engine: "edge", language: "en-GB", available: true })).toBe("Ryan · British English");
+  expect(voiceLabel({ id: "edge:en-US-AriaNeural", name: "Aria", engine: "edge", language: "en-US", available: true })).toBe("Aria · American English");
 });
 
 it("validates persisted settings and rejects external stream URLs", async () => {
