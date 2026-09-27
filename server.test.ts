@@ -1,8 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import { createFakePluginHost, makeThreadResponse, experimental_scanPublicSdkOnly } from "@get-bb/plugin-sdk/testing";
+import { fileURLToPath } from "node:url";
 import plugin from "./server";
 
 describe("hands-free", () => {
+  it("uses only public SDK surfaces and declared public dependencies", () => {
+    const scan = experimental_scanPublicSdkOnly(fileURLToPath(new URL(".", import.meta.url)), {
+      allow: [/^ws$/, /^vitest$/, /^react(?:\/.*)?$/, /^@testing-library\/react$/],
+    });
+    expect(scan.violations).toEqual([]);
+    expect(scan.privateDependencies).toEqual([]);
+  });
+
   it("does not register the retired diagnostic RPCs", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "hands-free" });
     plugin(bb);
