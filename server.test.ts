@@ -6,7 +6,7 @@ import plugin from "./server";
 describe("hands-free", () => {
   it("uses only public SDK surfaces and declared public dependencies", () => {
     const scan = experimental_scanPublicSdkOnly(fileURLToPath(new URL(".", import.meta.url)), {
-      allow: [/^ws$/, /^vitest$/, /^react(?:\/.*)?$/, /^@testing-library\/react$/],
+      allow: [/^ws$/, /^vitest$/, /^react(?:\/.*)?$/, /^@testing-library\/react$/, /^marked$/, /^html-entities$/],
     });
     expect(scan.violations).toEqual([]);
     expect(scan.privateDependencies).toEqual([]);

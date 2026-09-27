@@ -19,6 +19,8 @@
     ]
   },
   "dependencies": {
+    "html-entities": "^2.6.0",
+    "marked": "^16.4.2",
     "ws": "^8.22.0",
     "zod": "^4.3.6"
   },

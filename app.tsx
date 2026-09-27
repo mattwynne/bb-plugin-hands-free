@@ -4,6 +4,7 @@ import type { rpcContract } from "./server";
 import { createVoiceCues, type VoiceCues } from "./voice-cues";
 import { RecordingWaveform } from "./recording-waveform";
 import { prepareSpeech, releaseSpeech } from "./voice-client";
+import { plainSpeechText } from "./speech-text";
 import { useVoiceSettings, VoiceSettingsPage, voiceLabel } from "./voice-settings";
 
 // Web Speech is not part of every iOS WebView. Keep the keyboard-dictation
@@ -138,8 +139,9 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     setBusy(false);
   }, []);
 
-  const speak = useCallback(async (text: string) => {
-    if (!text.trim()) { setNotice("No reply to read yet."); return; }
+  const speak = useCallback(async (markdown: string) => {
+    const text = plainSpeechText(markdown);
+    if (!text) { setNotice("No reply to read yet."); return; }
     if (text.length > MAX_SPEAK) {
       setNotice("This reply is too long for the voice view. Open the thread to review it.");
       return;

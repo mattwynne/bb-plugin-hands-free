@@ -107,7 +107,7 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
     lang = "";
     onend: (() => void) | null = null;
     onerror: (() => void) | null = null;
-    constructor(_text: string) { utterance = this; }
+    constructor(public text: string) { utterance = this; }
   }
   const speakDevice = vi.fn();
   vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
@@ -124,7 +124,7 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
   const sent = vi.fn(async () => ({ accepted: true }));
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-    rpc: { send: sent, latest: async () => ({ text: "The test is fixed." }), state: async () => ({ state: "ready" }) },
+    rpc: { send: sent, latest: async () => ({ text: "**The test** is [fixed](https://example.com)." }), state: async () => ({ state: "ready" }) },
   });
   expect(slot.queryByText("Latest agent reply")).toBeNull();
   expect(slot.queryByText("Read reply")).toBeNull();
@@ -156,6 +156,11 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
   expect((slot.getByRole("button", { name: "Working" }) as HTMLButtonElement).disabled).toBe(true);
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await waitFor(() => expect(speechMode === "stream" ? players[1]?.play : speakDevice).toHaveBeenCalledOnce());
+  if (speechMode === "stream") {
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/plugins/hands-free/http/speech/prepare", expect.objectContaining({
+      body: expect.stringContaining('"text":"The test is fixed."'),
+    }));
+  } else expect(utterance!.text).toBe("The test is fixed.");
   const cuePlayer = players[0]!;
   const player = players[1];
   expect(players).toHaveLength(speechMode === "stream" ? 2 : 1);
