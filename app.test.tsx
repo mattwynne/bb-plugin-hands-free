@@ -42,6 +42,13 @@ it("keeps page guidance concise and relevant to the selected thread", async () =
   await waitFor(() => expect(selectedPage.getByRole("status").textContent).toBe("Ready. Tap to talk."));
   expect(selectedPage.getByText("Keep BB open and unlocked while recording or listening.")).toBeTruthy();
   expect(selectedPage.queryByText(/Read Aloud is optional/i)).toBeNull();
+  expect(selectedPage.queryByTestId("bb-thread-chat")).toBeNull();
+  expect(selectedPage.getByRole("button", { name: "Thread activity" }).getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(selectedPage.getByRole("button", { name: "Thread activity" }));
+  const activity = selectedPage.getByTestId("bb-thread-chat");
+  expect(activity.dataset).toMatchObject({ threadId: "th_1", variant: "timeline", layout: "document" });
+  fireEvent.click(selectedPage.getByRole("button", { name: "Thread activity" }));
+  expect(selectedPage.queryByTestId("bb-thread-chat")).toBeNull();
   selectedPage.lifecycle.unmount();
 });
 let slot: ReturnType<typeof renderSlot> | undefined;
@@ -373,6 +380,8 @@ it("locks the microphone during agent work and unlocks it after a silent idle or
   expect(workingControl.getAttribute("data-control-state")).toBe("working");
   expect(workingControl.querySelector('[data-icon="Spinner"]')?.className).toContain("animate-spin");
   expect(workingControl.querySelector('[data-icon="Spinner"]')?.className).toContain("motion-reduce:animate-none");
+  fireEvent.click(slot.getByRole("button", { name: "Thread activity" }));
+  expect(slot.getByTestId("bb-thread-chat").dataset.variant).toBe("timeline");
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "attention" });
   const attentionControl = slot.getByRole("button", { name: "Needs attention" }) as HTMLButtonElement;
   expect(attentionControl.disabled).toBe(true);

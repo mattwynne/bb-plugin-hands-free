@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { definePluginApp, experimental_Icon as Icon, experimental_useSidebarThreads, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, experimental_Icon as Icon, experimental_useSidebarThreads, ThreadChat, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import { createVoiceCues, type VoiceCues } from "./voice-cues";
 import { RecordingWaveform } from "./recording-waveform";
@@ -39,6 +39,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
   const [speaking, setSpeaking] = useState(false);
   const [phase, setPhase] = useState<"loading" | "ready" | "thinking" | "attention">("loading");
   const [notice, setNotice] = useState("");
+  const [showActivity, setShowActivity] = useState(false);
   const recognition = useRef<Recognition | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const recordingStream = useRef<MediaStream | null>(null);
@@ -500,6 +501,15 @@ function HandsFreePage({ subPath }: { subPath: string }) {
           }} className="min-h-16 w-full rounded-xl bg-primary px-3 text-lg font-bold text-primary-foreground disabled:opacity-40">Send dictated text</button>
         </div>}
         {notice && <p role="status" aria-live="polite" className="rounded-xl border p-3 text-sm">{notice}</p>}
+        {selected && <section aria-label="Thread activity" className="rounded-xl border">
+          <button type="button" aria-expanded={showActivity} aria-controls="hands-free-activity" onClick={() => setShowActivity((value) => !value)} className="flex min-h-12 w-full items-center justify-between px-3 text-left text-sm font-semibold">
+            Thread activity <span aria-hidden="true">{showActivity ? "▾" : "▸"}</span>
+          </button>
+          <div id="hands-free-activity" hidden={!showActivity} className="border-t px-2 py-2">
+            {/* Host timeline owns live reasoning/tool events and history; do not proxy them through voice RPC. */}
+            {showActivity && <ThreadChat key={selectedId} threadId={selectedId} variant="timeline" layout="document" />}
+          </div>
+        </section>}
         {selected && <p className="text-xs text-muted-foreground">Keep BB open and unlocked while recording or listening.</p>}
       </div>
     </main>
