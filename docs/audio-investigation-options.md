@@ -152,7 +152,7 @@ No runtime fix or device-volume success is claimed by this report. The research 
 
 The user confirmed **native BB app, phone speaker**, on a recent but unspecified iOS version. A separate **Audio test** navigation panel now provides the tone-only control and speech comparison. It deliberately does not run Hands-Free's capture/thread/reply logic. The same unboosted WAV is replayed through the same media element before/after fixed “Test.” speech, with no gain, cancellation, session-type, or release-delay changes between the two tones. A second control replays the same tone automatically after one second of silence and no speech, to check automatic playback independently.
 
-Completion is event-driven; missing callbacks fail with a watchdog rather than silently guessing speech completion. User stop/navigation cleans up only the test's audio and its own active speech. Fixed-vocabulary, rate-limited events identify the run and timing via `bb plugin logs voice-drive`. The existing 8× production cue is unchanged; the new factory parameter is used only to select unboosted `0.14` for this diagnostic.
+Completion is event-driven; missing callbacks fail with a watchdog rather than silently guessing speech completion. User stop/navigation cleans up only the test's audio and its own active speech. Fixed-vocabulary, rate-limited events identify the run and timing via `bb plugin logs hands-free`. The existing 8× production cue is unchanged; the new factory parameter is used only to select unboosted `0.14` for this diagnostic.
 
 ### First on-device results
 

@@ -248,7 +248,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
       }
     }
   }, [rpc, speak]);
-  useRealtime("voice-drive/thread-state", (payload) => {
+  useRealtime("hands-free/thread-state", (payload) => {
     if (!payload || typeof payload !== "object" || !("threadId" in payload) || !("state" in payload)) return;
     if (typeof payload.threadId !== "string" || payload.threadId !== selectedRef.current || !active.current) return;
     if (payload.state === "thinking") {
@@ -312,7 +312,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     if (!Constructor) {
       setShowFallback(true);
       setNotice("Microphone unavailable. Use the iPhone keyboard microphone below, then tap Send.");
-      window.setTimeout(() => document.getElementById("voice-drive-fallback")?.focus(), 0);
+      window.setTimeout(() => document.getElementById("hands-free-fallback")?.focus(), 0);
       return;
     }
     stopAudio();
@@ -437,8 +437,8 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     <main className="h-full min-h-0 overflow-y-auto px-4 py-5" aria-label="Hands-Free">
       <div className="mx-auto max-w-xl space-y-5 pb-12">
         <h1 className="text-2xl font-bold">Hands-Free</h1>
-        <label className="block text-base font-semibold" htmlFor="voice-drive-thread">Thread</label>
-        <select id="voice-drive-thread" className="w-full min-h-14 rounded-xl border bg-background px-3 text-base" value={selectedId} onChange={(event) => navigate.toPluginPanel("drive", { subPath: encodeURIComponent(event.target.value) })}>
+        <label className="block text-base font-semibold" htmlFor="hands-free-thread">Thread</label>
+        <select id="hands-free-thread" className="w-full min-h-14 rounded-xl border bg-background px-3 text-base" value={selectedId} onChange={(event) => navigate.toPluginPanel("hands-free", { subPath: encodeURIComponent(event.target.value) })}>
           <option value="">Choose a thread</option>
           {threads.map((thread) => <option key={thread.id} value={thread.id}>{thread.title || thread.titleFallback || thread.id}</option>)}
         </select>
@@ -451,8 +451,8 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         </button>
         {retryText && <button type="button" disabled={busy || phase !== "ready"} onClick={() => void sendText(retryText, selectedId)} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">Retry sending</button>}
         {showFallback && <div className="space-y-3 rounded-xl border p-4">
-          <label htmlFor="voice-drive-fallback" className="block font-semibold">Keyboard dictation fallback</label>
-          <textarea id="voice-drive-fallback" rows={3} maxLength={12000} value={fallbackText} onChange={(event) => setFallbackText(event.target.value)} placeholder="Use the iPhone keyboard microphone" className="w-full rounded-xl border bg-background p-4 text-lg" />
+          <label htmlFor="hands-free-fallback" className="block font-semibold">Keyboard dictation fallback</label>
+          <textarea id="hands-free-fallback" rows={3} maxLength={12000} value={fallbackText} onChange={(event) => setFallbackText(event.target.value)} placeholder="Use the iPhone keyboard microphone" className="w-full rounded-xl border bg-background p-4 text-lg" />
           <button type="button" disabled={!selected || !fallbackText.trim() || busy || phase !== "ready"} onClick={() => {
             const text = fallbackText;
             setFallbackText("");
@@ -469,10 +469,10 @@ function HandsFreePage({ subPath }: { subPath: string }) {
 
 function OpenHandsFree({ threadId }: { threadId: string }) {
   const navigate = useBbNavigate();
-  return <button type="button" aria-label="Open Hands-Free for this thread" title="Hands-Free" onClick={() => navigate.toPluginPanel("drive", { subPath: encodeURIComponent(threadId) })} className="rounded-md border px-2 text-sm font-bold">🎙 Hands-Free</button>;
+  return <button type="button" aria-label="Open Hands-Free for this thread" title="Hands-Free" onClick={() => navigate.toPluginPanel("hands-free", { subPath: encodeURIComponent(threadId) })} className="rounded-md border px-2 text-sm font-bold">🎙 Hands-Free</button>;
 }
 
 export default definePluginApp((app) => {
-  app.slots.navPanel({ id: "drive", title: "Hands-Free", icon: "Mic", path: "drive", component: HandsFreePage });
-  app.slots.experimental_threadHeaderAction({ id: "open-drive", title: "Hands-Free", component: OpenHandsFree });
+  app.slots.navPanel({ id: "hands-free", title: "Hands-Free", icon: "Mic", path: "hands-free", component: HandsFreePage });
+  app.slots.experimental_threadHeaderAction({ id: "open-hands-free", title: "Hands-Free", component: OpenHandsFree });
 });

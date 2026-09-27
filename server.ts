@@ -37,19 +37,19 @@ export default function plugin(bb: BbPluginApi) {
     },
   });
   bb.events.on("thread.active", ({ thread }) => {
-    bb.realtime.publish("voice-drive/thread-state", { threadId: thread.id, state: "thinking" });
+    bb.realtime.publish("hands-free/thread-state", { threadId: thread.id, state: "thinking" });
   });
   bb.events.on("thread.idle", ({ thread, lastAssistantText }) => {
     // Even an idle transition without a reply must release the talk button.
     // Never broadcast conversation text to other clients.
-    bb.realtime.publish("voice-drive/thread-state", {
+    bb.realtime.publish("hands-free/thread-state", {
       threadId: thread.id, state: "ready", hasReply: Boolean(lastAssistantText?.trim()),
     });
   });
   bb.events.on("thread.failed", ({ thread }) => {
-    bb.realtime.publish("voice-drive/thread-state", { threadId: thread.id, state: "failed" });
+    bb.realtime.publish("hands-free/thread-state", { threadId: thread.id, state: "failed" });
   });
   bb.events.on("interaction.pending", ({ thread }) => {
-    bb.realtime.publish("voice-drive/thread-state", { threadId: thread.id, state: "attention" });
+    bb.realtime.publish("hands-free/thread-state", { threadId: thread.id, state: "attention" });
   });
 }

@@ -1,5 +1,5 @@
 ---
-name: voice-drive
+name: hands-free
 description: "Explain how to use BB Hands-Free's iPhone tap-to-talk view and its safety limits."
 ---
 

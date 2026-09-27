@@ -7,9 +7,9 @@ import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 const app = await loadPluginApp(() => import("./app"));
 it("registers Hands-Free on the existing sidebar route", () => {
   expect(app.navPanels).toHaveLength(1);
-  expect(app.navPanels[0]).toMatchObject({ id: "drive", path: "drive", title: "Hands-Free" });
+  expect(app.navPanels[0]).toMatchObject({ id: "hands-free", path: "hands-free", title: "Hands-Free" });
   expect(app.threadHeaderActions).toHaveLength(1);
-  expect(app.threadHeaderActions[0]).toMatchObject({ id: "open-drive", title: "Hands-Free" });
+  expect(app.threadHeaderActions[0]).toMatchObject({ id: "open-hands-free", title: "Hands-Free" });
 
   const page = renderSlot(app.navPanels[0]!, { subPath: "" }, { sidebarThreads: { threads: [] } });
   expect(page.getByRole("main", { name: "Hands-Free" })).toBeTruthy();
@@ -117,7 +117,7 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
   expect(fetchMock).toHaveBeenCalledWith("/api/v1/system/voice-transcription", expect.objectContaining({ method: "POST" }));
 
   expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
-  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await waitFor(() => expect(speechMode === "stream" ? players[1]?.play : speakDevice).toHaveBeenCalledOnce());
   const cuePlayer = players[0]!;
   const player = players[1];
@@ -127,7 +127,7 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
   expect(stopTracks).toHaveBeenCalledOnce();
   expect(slot.getByRole("button", { name: "■ Stop audio" })).toBeTruthy();
   expect(slot.queryByText("The test is fixed.")).toBeNull();
-  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_2", state: "ready", hasReply: true });
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_2", state: "ready", hasReply: true });
   expect(speechMode === "stream" ? player!.play : speakDevice).toHaveBeenCalledOnce();
   vi.useFakeTimers();
   await act(async () => {
@@ -188,7 +188,7 @@ it("retains the same local cue player across device replies, Stop, and late spee
     },
   });
   await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
-  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await waitFor(() => expect(utterance).not.toBeNull());
   const priorCancelCalls = cancelSpeech.mock.calls.length;
   expect(play).not.toHaveBeenCalled(); // no opening cue, and this scenario has no dictation
@@ -206,14 +206,14 @@ it("retains the same local cue player across device replies, Stop, and late spee
   await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
   expect(revokeObjectURL).not.toHaveBeenCalled();
 
-  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await act(async () => { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(1000); });
   expect(play).toHaveBeenCalledTimes(2);
   fireEvent.click(slot.getByRole("button", { name: "■ Stop audio" }));
   await act(async () => { utterance!.onend?.(); await vi.advanceTimersByTimeAsync(3000); });
   expect(play).toHaveBeenCalledTimes(2); // a late speech callback cannot revive stopped playback
 
-  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
   await act(async () => { utterance!.onend?.(); });
   fireEvent.click(slot.getByRole("button", { name: "■ Stop audio" }));
   await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
@@ -277,7 +277,7 @@ it.each(["end-sync", "end-queued", "silence-sync", "silence-queued", "active-err
     });
     await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
     vi.useFakeTimers();
-    await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+    await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
     expect(synth.speak).toHaveBeenCalledOnce();
     await act(async () => {
       if (mode.startsWith("silence")) {
@@ -324,13 +324,13 @@ it("locks the microphone during agent work and unlocks it after a silent idle or
   });
   await waitFor(() => expect(slot!.getByText("Agent thinking…")).toBeTruthy());
   expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
-  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "attention" });
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "attention" });
   expect(slot.getByText("Needs attention")).toBeTruthy();
   expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
-  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "ready", hasReply: false });
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: false });
   expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
-  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "thinking" });
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "thinking" });
   expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
-  await slot.behavior.emitRealtime("voice-drive/thread-state", { threadId: "th_1", state: "failed" });
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "failed" });
   expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
 });

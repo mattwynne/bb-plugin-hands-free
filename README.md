@@ -5,7 +5,7 @@ A large-button, tap-to-talk and spoken-reply companion for **BB on iPhone**. Thi
 ## Install
 
 ```sh
-bb plugin install /home/matt/projects/bb-plugin-voice-drive
+bb plugin install /home/matt/projects/bb-plugin-hands-free
 # Optional, for the neural voice (clone and install its subdirectory):
 git clone https://github.com/csells/bb-plugins.git
 bb plugin install ./bb-plugins/plugins/read-aloud
@@ -24,9 +24,9 @@ Open **Hands-Free** in the BB sidebar, select a thread, or use the **Hands-Free*
 - **Speech is sent as soon as dictation ends**; there is no chance to correct transcription before the agent sees it. Do not dictate passwords, destructive instructions or anything you must inspect first. Hands-Free does **not** approve tool calls or permission prompts, read every stream update, or replace reviewing code changes in the normal thread view. Sending uses only a fresh turn on an idle thread; a busy thread returns an error rather than steering/queuing silently. It uses the thread's server-side defaults, not temporary model/permission choices or attachments from BB's normal composer.
 - When a selected thread becomes idle, Hands-Free reads its last assistant output, not every streaming update or a full transcript. Identical consecutive outputs are de-duplicated. Answers over 12,000 characters are not silently truncated: open the normal thread to review them. The voice page only lists threads present in BB's current sidebar roster.
 
-## Compatibility
+## Identity
 
-Hands-Free is a display-name change from Voice Drive. Existing installations and saved data continue to use the original internal identities: the package and repository remain `bb-plugin-voice-drive`, and the package-derived plugin and storage ID remains `voice-drive`. The sidebar contribution ID and route remain `drive`; the thread-header contribution remains `open-drive`; the realtime channel remains `voice-drive/thread-state`; DOM control IDs retain the `voice-drive-` prefix; and the bundled skill remains at `skills/voice-drive` with the skill ID `voice-drive`. These strings are compatibility identifiers rather than user-facing product naming.
+The package is `bb-plugin-hands-free` and its BB plugin ID is `hands-free`. The sidebar route is `hands-free`, and the bundled skill is `skills/hands-free`.
 
 ## Development
 
