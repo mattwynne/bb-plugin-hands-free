@@ -3,6 +3,8 @@ import { definePluginApp, experimental_Icon as Icon, experimental_useSidebarThre
 import type { rpcContract } from "./server";
 import { createVoiceCues, type VoiceCues } from "./voice-cues";
 import { RecordingWaveform } from "./recording-waveform";
+import { prepareSpeech, releaseSpeech } from "./voice-client";
+import { useVoiceSettings, VoiceSettingsPage, voiceLabel } from "./voice-settings";
 
 // Web Speech is not part of every iOS WebView. Keep the keyboard-dictation
 // path usable when SpeechRecognition is absent or permission is denied.
@@ -21,10 +23,14 @@ function recognitionConstructor(): RecognitionConstructor | undefined {
   return browser.SpeechRecognition ?? browser.webkitSpeechRecognition;
 }
 
-const READ_ALOUD = "/api/v1/plugins/read-aloud/http";
-const MAX_SPEAK = 12000;
+const MAX_SPEAK = 4096;
 function HandsFreePage({ subPath }: { subPath: string }) {
   const rpc = useRpc<typeof rpcContract>();
+  const voice = useVoiceSettings();
+  const voiceRef = useRef(voice);
+  voiceRef.current = voice;
+  const speechRequest = useRef<AbortController | null>(null);
+  const speechId = useRef<string | null>(null);
   const navigate = useBbNavigate();
   const { threads, status: threadsStatus } = experimental_useSidebarThreads();
   let selectedId = "";
@@ -72,6 +78,10 @@ function HandsFreePage({ subPath }: { subPath: string }) {
 
   const stopAudio = useCallback(() => {
     sequence.current += 1;
+    speechRequest.current?.abort();
+    speechRequest.current = null;
+    if (speechId.current) releaseSpeech(speechId.current);
+    speechId.current = null;
     if (playbackCleanupTimer.current !== null) clearTimeout(playbackCleanupTimer.current);
     if (speechMonitor.current !== null) clearInterval(speechMonitor.current);
     playbackCleanupTimer.current = null;
@@ -136,27 +146,27 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     }
     stopAudio();
     const mine = sequence.current;
+    const { selectedVoice, speed } = voiceRef.current;
+    if (!selectedVoice.available) {
+      setNotice(`Selected voice unavailable: ${selectedVoice.unavailableReason || "Provider unavailable"}. Choose a Device voice for device fallback.`);
+      return;
+    }
     setSpeaking(true);
     setNotice("Preparing audio…");
     try {
-      // Reuse the installed Read Aloud plugin's neural voice if available.
-      const prepared = await fetch(`${READ_ALOUD}/prepare`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!prepared.ok) throw new Error(`Read Aloud unavailable (${prepared.status})`);
-      const data: unknown = await prepared.json();
-      if (!data || typeof data !== "object" || !("id" in data) || typeof data.id !== "string") {
-        throw new Error("Invalid audio response");
-      }
-      if (mine !== sequence.current) return;
-      const player = new Audio(`${READ_ALOUD}/stream?id=${encodeURIComponent(data.id)}`);
+      if (selectedVoice.engine === "device") throw new Error("device");
+      const controller = new AbortController();
+      speechRequest.current = controller;
+      const data = await prepareSpeech(text, selectedVoice.id, speed, controller.signal);
+      if (mine !== sequence.current) { releaseSpeech(data.audioId); return; }
+      speechId.current = data.audioId;
+      const player = new Audio(data.url);
       audio.current = player;
       player.onended = () => { if (mine === sequence.current) finishPlayback(); };
       player.onerror = () => { if (mine === sequence.current) { finishPlayback(); setNotice("Audio interrupted. Open the thread to read this reply."); } };
       await player.play();
-      if (mine === sequence.current) setNotice("Reading aloud. Tap Stop audio at any time.");
-    } catch {
+      if (mine === sequence.current) setNotice(`Reading with ${voiceLabel(selectedVoice)}. Tap Stop audio at any time.`);
+    } catch (error) {
       if (mine !== sequence.current) return;
       if (audio.current) {
         audio.current.pause();
@@ -164,14 +174,20 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         audio.current.load();
         audio.current = null;
       }
-      // No network/service or audio autoplay denied: browser TTS may work in a
-      // WebView, but is also optional. Do not claim success if neither does.
+      // Never silently change providers. Device fallback is an explicit picker choice.
+      if (selectedVoice.engine !== "device") {
+        stopAudio();
+        setNotice(`${error instanceof Error ? error.message : "Speech playback failed"}. Choose a Device voice for device fallback.`);
+        return;
+      }
       if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
-        finishPlayback(); setNotice("Speech playback is unavailable. Install Read Aloud or review the reply on screen.");
+        finishPlayback(); setNotice("Speech playback is unavailable. Review the reply on screen.");
         return;
       }
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = navigator.language || "en-US";
+      utterance.voice = selectedVoice.deviceVoice ?? null;
+      utterance.lang = selectedVoice.language || navigator.language || "en-US";
+      utterance.rate = speed;
       let completed = false;
       const stopMonitoring = () => {
         if (speechMonitor.current !== null) clearInterval(speechMonitor.current);
@@ -187,7 +203,8 @@ function HandsFreePage({ subPath }: { subPath: string }) {
       };
       utterance.onend = () => completeSpeech();
       utterance.onerror = () => completeSpeech(true);
-      window.speechSynthesis.speak(utterance);
+      try { window.speechSynthesis.speak(utterance); }
+      catch { completeSpeech(true); }
       // A synchronous terminal callback must not install a new monitor or
       // overwrite a genuine failure notice when speak() returns.
       if (completed || mine !== sequence.current) return;
@@ -200,7 +217,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         if (window.speechSynthesis.speaking) { heardSpeech = true; silentChecks = 0; }
         else if (heardSpeech && ++silentChecks >= 4) completeSpeech();
       }, 300);
-      setNotice("Reading with device voice.");
+      setNotice(`Reading with ${voiceLabel(selectedVoice)} (device voice).`);
     }
   }, [stopAudio, finishPlayback]);
 
@@ -526,6 +543,7 @@ function OpenHandsFree({ threadId }: { threadId: string }) {
 }
 
 export default definePluginApp((app) => {
+  app.slots.settingsSection({ id: "voice", title: "Voice", component: VoiceSettingsPage });
   app.slots.navPanel({ id: "hands-free", title: "Hands-Free", icon: "Mic", path: "hands-free", component: HandsFreePage });
   app.slots.experimental_threadHeaderAction({ id: "open-hands-free", title: "Hands-Free", component: OpenHandsFree });
 });

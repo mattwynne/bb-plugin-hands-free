@@ -6,6 +6,8 @@ import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 
 const app = await loadPluginApp(() => import("./app"));
 it("registers Hands-Free on the existing sidebar route", () => {
+  expect(app.settingsSections).toHaveLength(1);
+  expect(app.settingsSections[0]).toMatchObject({ id: "voice", title: "Voice" });
   expect(app.navPanels).toHaveLength(1);
   expect(app.navPanels[0]).toMatchObject({ id: "hands-free", path: "hands-free", title: "Hands-Free" });
   expect(app.threadHeaderActions).toHaveLength(1);
@@ -14,6 +16,7 @@ it("registers Hands-Free on the existing sidebar route", () => {
   const page = renderSlot(app.navPanels[0]!, { subPath: "" }, { sidebarThreads: { threads: [] } });
   expect(page.getByRole("main", { name: "Hands-Free" })).toBeTruthy();
   expect(page.getByRole("heading", { name: "Hands-Free" })).toBeTruthy();
+  expect(page.queryByRole("combobox", { name: "Voice" })).toBeNull();
   const unselectedControl = page.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement;
   expect(unselectedControl.disabled).toBe(true);
   expect(unselectedControl.querySelector('[data-icon="Mic"]')).not.toBeNull();
@@ -59,6 +62,7 @@ let slot: ReturnType<typeof renderSlot> | undefined;
 afterEach(() => {
   slot?.lifecycle.unmount();
   slot = undefined;
+  localStorage.clear();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -108,10 +112,13 @@ it.each(["stream", "device"] as const)("reuses the cue player through recording,
   const speakDevice = vi.fn();
   vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
   vi.stubGlobal("speechSynthesis", { speak: speakDevice, cancel: vi.fn(), speaking: false });
-  const fetchMock = vi.fn(async (input: string) => input.includes("voice-transcription")
+  if (speechMode === "stream") localStorage.setItem("hands-free.voice.v1", JSON.stringify({ voiceId: "edge:en-US-AriaNeural", speed: 1 }));
+  const fetchMock = vi.fn(async (input: string) => input.endsWith("/voices")
+    ? { ok: true, json: async () => ({ voices: [{ id: "edge:en-US-AriaNeural", name: "Aria", engine: "edge", language: "en-US", available: true }] }) }
+    : input.includes("voice-transcription")
     ? { ok: true, json: async () => ({ text: "Fix the test" }) }
     : speechMode === "device" ? { ok: false, status: 404 }
-    : { ok: true, json: async () => ({ id: "audio-1" }) });
+    : { ok: true, json: async () => ({ audioId: "audio-1", url: "/api/v1/plugins/hands-free/http/speech/audio?id=audio-1", expiresAt: Date.now() + 120000 }) });
   vi.stubGlobal("fetch", fetchMock);
 
   const sent = vi.fn(async () => ({ accepted: true }));
@@ -396,4 +403,27 @@ it("locks the microphone during agent work and unlocks it after a silent idle or
   expect((slot.getByRole("button", { name: "Working" }) as HTMLButtonElement).disabled).toBe(true);
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "failed" });
   expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+
+it("uses shared settings for replies and never silently downgrades an unavailable selection", async () => {
+  const synth = { speak: vi.fn(), cancel: vi.fn(), getVoices: () => [] };
+  vi.stubGlobal("speechSynthesis", synth);
+  vi.stubGlobal("SpeechSynthesisUtterance", class {});
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ voices: [
+    { id: "openai:coral", name: "Coral", engine: "openai", language: "multilingual", available: false, unavailableReason: "API key missing" },
+  ] }) })));
+  slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
+    sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
+    rpc: { state: async () => ({ state: "ready" }), latest: async () => ({ text: "Hello there" }) },
+  });
+  await waitFor(() => expect(slot!.getByRole("status").textContent).toBe("Ready. Tap to talk."));
+  act(() => {
+    localStorage.setItem("hands-free.voice.v1", JSON.stringify({ voiceId: "openai:coral", speed: 1.2 }));
+    window.dispatchEvent(new Event("hands-free.voice.v1"));
+  });
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await waitFor(() => expect(slot!.getByRole("status").textContent).toContain("Selected voice unavailable: API key missing"));
+  expect(synth.speak).not.toHaveBeenCalled();
+  expect(slot.getByRole("status").textContent).toContain("Device voice for device fallback");
 });
