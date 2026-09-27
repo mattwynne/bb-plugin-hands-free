@@ -10,7 +10,7 @@ describe("plugin identity", () => {
   it("uses Hands-Free for both the public name and package identity", () => {
     expect(manifest.bb).toMatchObject({
       name: "Hands-Free",
-      description: "Tap-to-talk and spoken-reply companion for BB threads",
+      description: "Talk to BB threads on iPhone and hear replies without returning to the chat view.",
     });
     expect(manifest.name).toBe("bb-plugin-hands-free");
   });

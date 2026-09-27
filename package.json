@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Hands-Free",
-    "description": "Tap-to-talk and spoken-reply companion for BB threads",
+    "description": "Talk to BB threads on iPhone and hear replies without returning to the chat view.",
     "branding": {
       "icon": "Mic"
     },
