@@ -1,0 +1,15 @@
+# Changelog
+
+## [Unreleased]
+
+## [0.2.0] - 2026-10-09
+
+- Add Hands-Free voice settings to choose an Edge neural voice and speaking speed, with a shortcut from the Hands-Free page. Existing device/OpenAI voice choices migrate to the default Sonia voice while retaining speed.
+- Speak replies with built-in Edge neural voices; the separate Read Aloud plugin is no longer needed for speech output. Speech text is sent to Microsoft.
+- Read Markdown replies as plain speech without speaking formatting marks or link destinations.
+- Add an action to open the selected thread from the Hands-Free activity view.
+- Show an up arrow instead of a stop square while recording, to make the finish-and-send action clearer.
+
+## [0.1.0] - 2026-09-27
+
+- Initial Hands-Free release.

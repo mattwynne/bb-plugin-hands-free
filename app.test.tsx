@@ -137,7 +137,8 @@ it("reuses the cue player through recording, finish, and an Edge reply without b
   await waitFor(() => {
     const finishControl = slot!.getByRole("button", { name: "Finish dictating" });
     expect(finishControl.getAttribute("data-control-state")).toBe("complete");
-    expect(finishControl.querySelector('[data-icon="Square"]')).not.toBeNull();
+    expect(finishControl.querySelector('[data-icon="ArrowUp"]')).not.toBeNull();
+    expect(finishControl.querySelector('[data-icon="ArrowUp"]')?.className).not.toContain("stroke-0");
     expect(finishControl.querySelector("canvas[aria-hidden]")).not.toBeNull();
   });
   expect(players[0]!.src).toBe("blob:tap-cue");

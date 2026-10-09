@@ -430,7 +430,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
   const controlIcon = controlState === "playback"
     ? "Square"
     : controlState === "complete"
-      ? "Square"
+      ? "ArrowUp"
       : controlState === "working"
         ? "Spinner"
         : controlState === "attention"
@@ -457,7 +457,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
           <button type="button" disabled={controlDisabled} onClick={speaking ? stopAudio : listening ? stopListening : startListening}
             className="inline-flex size-28 shrink-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-full bg-foreground text-background transition-colors duration-150 hover:bg-foreground/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-40"
             aria-pressed={listening} aria-label={controlLabel} data-control-state={controlState}>
-            <Icon name={controlIcon} className={`size-9 ${controlState === "working" ? "animate-spin motion-reduce:animate-none" : controlState === "complete" || controlState === "playback" ? "fill-current [&_*]:stroke-0" : ""}`} aria-hidden />
+            <Icon name={controlIcon} className={`size-9 ${controlState === "working" ? "animate-spin motion-reduce:animate-none" : controlState === "playback" ? "fill-current [&_*]:stroke-0" : ""}`} aria-hidden />
             {listening && <RecordingWaveform stream={waveformStream} />}
           </button>
         </div>
