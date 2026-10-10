@@ -20,9 +20,9 @@ export interface MediaReadyCue {
   dispose(): void;
 }
 
-function createCueUrl(peakGain: number, descending = false): string {
+function createCueUrl(peakGain: number, descending = false, thinking = false): string {
   const sampleRate = 16000;
-  const duration = 0.54;
+  const duration = thinking ? 5 : 0.54;
   const frameCount = Math.ceil(sampleRate * duration);
   const buffer = new ArrayBuffer(44 + frameCount * 2);
   const view = new DataView(buffer);
@@ -42,8 +42,9 @@ function createCueUrl(peakGain: number, descending = false): string {
   text(36, "data");
   view.setUint32(40, frameCount * 2, true);
 
-  const notes: readonly [frequency: number, start: number][] = descending
-    ? [[659, 0], [523, 0.23]] : [[523, 0], [659, 0.23]];
+  const notes: readonly [frequency: number, start: number][] = thinking
+    ? [[392, 1.2], [440, 1.42]]
+    : descending ? [[659, 0], [523, 0.23]] : [[523, 0], [659, 0.23]];
   for (let frame = 0; frame < frameCount; frame += 1) {
     const time = frame / sampleRate;
     let sample = 0;
@@ -57,6 +58,10 @@ function createCueUrl(peakGain: number, descending = false): string {
   }
 
   return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+}
+
+export function createThinkingLoopUrl(): string {
+  return createCueUrl(READY_CUE_GAIN, false, true);
 }
 
 export function createMediaReadyCue(peakGain = READY_CUE_GAIN): MediaReadyCue | null {

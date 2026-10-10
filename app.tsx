@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { definePluginApp, experimental_Icon as Icon, experimental_useSidebarThreads, ThreadChat, UrlLink, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import { createVoiceCues, type VoiceCues } from "./voice-cues";
+import { createThinkingLoopUrl } from "./media-ready-cue";
 import { RecordingWaveform } from "./recording-waveform";
 import { prepareSpeech, releaseSpeech } from "./voice-client";
 import { plainSpeechText } from "./speech-text";
@@ -52,6 +53,8 @@ function HandsFreePage({ subPath }: { subPath: string }) {
   const recordingStream = useRef<MediaStream | null>(null);
   const recordingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
+  const thinkingUrl = useRef<string | null>(null);
+  const thinking = useRef(false);
   const playbackCleanupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sequence = useRef(0);
   const captureGeneration = useRef(0);
@@ -63,21 +66,26 @@ function HandsFreePage({ subPath }: { subPath: string }) {
   const phaseToken = useRef(0);
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
+  const diagnosticSession = useRef(crypto.randomUUID());
+  const diagnosticStart = useRef(performance.now());
+  const report = useCallback((event: "thinking" | "thinking-play" | "thinking-playing" | "thinking-pause" | "thinking-failed" | "cue-play" | "cue-stop" | "speech-prepare" | "speech-ready" | "speech-play" | "speech-playing" | "speech-pause" | "speech-ended" | "speech-error" | "speech-cancel" | "speech-failed", detail: "none" | "running" | "suspended" | "interrupted" | "closed" | "playing" | "paused" | "ended" | "aborted" | "not-allowed" | "network" | "other" = "none") => {
+    void rpc.call("audioDiagnostic", { session: diagnosticSession.current, event, detail, elapsedMs: Math.min(3_600_000, Math.floor(performance.now() - diagnosticStart.current)) }).catch(() => {});
+  }, [rpc]);
   useEffect(() => {
-    cues.current = createVoiceCues();
-    return () => { cues.current?.dispose(); cues.current = null; };
-  }, []);
-  const transition = useCallback((next: typeof phase) => {
-    phaseToken.current += 1;
-    phaseRef.current = next;
-    setPhase(next);
-    if (next === "thinking") cues.current?.startThinking();
-    else cues.current?.stopThinking();
-    return phaseToken.current;
-  }, []);
+    cues.current = createVoiceCues(report);
+    if (typeof URL.createObjectURL === "function") thinkingUrl.current = createThinkingLoopUrl();
+    return () => {
+      cues.current?.dispose();
+      cues.current = null;
+      if (thinkingUrl.current) URL.revokeObjectURL(thinkingUrl.current);
+      thinkingUrl.current = null;
+    };
+  }, [report]);
 
   const stopAudio = useCallback(() => {
     sequence.current += 1;
+    thinking.current = false;
+    if (speechRequest.current) report("speech-cancel", "aborted");
     speechRequest.current?.abort();
     speechRequest.current = null;
     if (speechId.current) releaseSpeech(speechId.current);
@@ -85,14 +93,50 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     if (playbackCleanupTimer.current !== null) clearTimeout(playbackCleanupTimer.current);
     playbackCleanupTimer.current = null;
     if (audio.current) {
-      audio.current.pause();
-      audio.current.removeAttribute("src");
-      audio.current.load();
-      audio.current = null;
+      const player = audio.current;
+      player.onended = null;
+      player.onerror = null;
+      player.onplaying = null;
+      player.onpause = null;
+      if (!player.ended) {
+        if (!player.paused) { report("speech-pause"); player.pause(); }
+        player.removeAttribute("src");
+        player.load();
+        audio.current = null;
+      }
     }
     cues.current?.stopCue(); // stop playback, but keep the already-used cue player
     setSpeaking(false);
-  }, []);
+  }, [report]);
+
+  const startThinking = useCallback(() => {
+    if (thinking.current || !thinkingUrl.current || !active.current) return;
+    thinking.current = true;
+    const player = audio.current ?? new Audio();
+    audio.current = player;
+    player.onended = null;
+    player.onerror = () => { if (thinking.current) { thinking.current = false; report("thinking-failed"); } };
+    player.onpause = () => { if (thinking.current) report("thinking-pause", "paused"); };
+    player.src = thinkingUrl.current;
+    player.loop = true;
+    player.onplaying = () => { if (thinking.current) report("thinking-playing"); };
+    report("thinking-play");
+    void player.play().catch(() => {
+      if (thinking.current && audio.current === player) {
+        thinking.current = false;
+        report("thinking-failed");
+      }
+    });
+  }, [report]);
+
+  const transition = useCallback((next: typeof phase, retainThinking = false) => {
+    phaseToken.current += 1;
+    phaseRef.current = next;
+    setPhase(next);
+    if (next === "thinking") startThinking();
+    else if (!retainThinking && thinking.current) stopAudio();
+    return phaseToken.current;
+  }, [startThinking, stopAudio]);
 
   const finishPlayback = useCallback(() => {
     if (!active.current || phaseRef.current !== "ready") { stopAudio(); return; }
@@ -131,36 +175,53 @@ function HandsFreePage({ subPath }: { subPath: string }) {
 
   const speak = useCallback(async (markdown: string) => {
     const text = plainSpeechText(markdown);
-    if (!text) { setNotice("No reply to read yet."); return; }
+    if (!text) { stopAudio(); setNotice("No reply to read yet."); return; }
     if (text.length > MAX_SPEAK) {
+      stopAudio();
       setNotice("This reply is too long for the voice view. Open the thread to review it.");
       return;
     }
-    stopAudio();
+    if (thinking.current) {
+      sequence.current += 1;
+      cues.current?.stopCue();
+    } else stopAudio();
     const mine = sequence.current;
     const { selectedVoice, speed } = voiceRef.current;
     if (!selectedVoice.available) {
+      stopAudio();
       setNotice(`Selected voice unavailable: ${selectedVoice.unavailableReason || "Provider unavailable"}. Choose another Edge voice.`);
       return;
     }
     setSpeaking(true);
     setNotice("Preparing audio…");
+    report("speech-prepare");
     try {
       const controller = new AbortController();
       speechRequest.current = controller;
       const data = await prepareSpeech(text, selectedVoice.id, speed, controller.signal);
       if (mine !== sequence.current) { releaseSpeech(data.audioId); return; }
+      speechRequest.current = null;
+      report("speech-ready");
       speechId.current = data.audioId;
-      const player = new Audio(data.url);
+      const player = audio.current ?? new Audio();
       audio.current = player;
-      player.onended = () => { if (mine === sequence.current) finishPlayback(); };
-      player.onerror = () => { if (mine === sequence.current) { finishPlayback(); setNotice("Audio interrupted. Open the thread to read this reply."); } };
+      thinking.current = false;
+      player.loop = false;
+      player.src = data.url;
+      player.onended = () => { if (mine === sequence.current) { report("speech-ended"); finishPlayback(); } };
+      player.onerror = () => { if (mine === sequence.current) { report("speech-error", player.error?.code === MediaError.MEDIA_ERR_NETWORK ? "network" : "other"); finishPlayback(); setNotice("Audio interrupted. Open the thread to read this reply."); } };
+      player.onplaying = () => { if (mine === sequence.current) report("speech-playing"); };
+      player.onpause = () => { if (mine === sequence.current) report("speech-pause", "paused"); };
+      report("speech-play");
       await player.play();
       if (mine === sequence.current) setNotice(`Reading with ${voiceLabel(selectedVoice)}. Tap Stop audio at any time.`);
     } catch (error) {
       if (mine !== sequence.current) return;
+      speechRequest.current = null;
+      const errorName = error && typeof error === "object" && "name" in error ? error.name : null;
+      report("speech-failed", errorName === "AbortError" ? "aborted" : errorName === "NotAllowedError" ? "not-allowed" : errorName === "NetworkError" ? "network" : "other");
       if (audio.current) {
-        audio.current.pause();
+        if (!audio.current.paused && !audio.current.ended) audio.current.pause();
         audio.current.removeAttribute("src");
         audio.current.load();
         audio.current = null;
@@ -168,7 +229,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
       stopAudio();
       setNotice(`${error instanceof Error ? error.message : "Speech playback failed"}. Try again or choose another Edge voice.`);
     }
-  }, [stopAudio, finishPlayback]);
+  }, [stopAudio, finishPlayback, report]);
 
   useEffect(() => {
     cancelCapture();
@@ -197,46 +258,55 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     }
     return () => {
       active.current = false;
-      cues.current?.stopThinking();
       phaseToken.current += 1;
       cancelCapture();
       stopAudio();
+      if (audio.current) {
+        audio.current.removeAttribute("src");
+        audio.current.load();
+        audio.current = null;
+      }
     };
   }, [selectedId, stopAudio, rpc, transition, cancelCapture]);
 
   const readNewReply = useCallback(async (threadId: string, token: number) => {
     try {
       const result = await rpc.call("latest", { threadId });
-      if (!active.current || selectedRef.current !== threadId || phaseToken.current !== token || !result.text) return;
-      if (lastSpoken.current === result.text) { cues.current?.ready(); return; }
+      if (!active.current || selectedRef.current !== threadId || phaseToken.current !== token) return;
+      if (!result.text || lastSpoken.current === result.text) { stopAudio(); cues.current?.ready(); return; }
       lastSpoken.current = result.text;
       await speak(result.text);
     } catch (error) {
       if (active.current && selectedRef.current === threadId && phaseToken.current === token) {
+        stopAudio();
         cues.current?.ready();
         setNotice(error instanceof Error ? `Could not read reply: ${error.message}` : "Could not read reply.");
       }
     }
-  }, [rpc, speak]);
+  }, [rpc, speak, stopAudio]);
   useRealtime("hands-free/thread-state", (payload) => {
     if (!payload || typeof payload !== "object" || !("threadId" in payload) || !("state" in payload)) return;
     if (typeof payload.threadId !== "string" || payload.threadId !== selectedRef.current || !active.current) return;
     if (payload.state === "thinking") {
+      report("thinking");
       if (listening || recorder.current || recognition.current) cancelCapture();
-      stopAudio();
+      if (!thinking.current) stopAudio();
       transition("thinking");
       setNotice("Agent is thinking. Talk is disabled until it finishes.");
     } else if (payload.state === "attention") {
       if (listening || recorder.current || recognition.current) cancelCapture();
+      stopAudio();
       transition("attention");
       setNotice("Agent needs your attention. Open the thread to respond.");
     } else if (payload.state === "failed") {
+      stopAudio();
       transition("ready");
       cues.current?.ready();
       setNotice("Agent stopped with an error. Open the thread to inspect it.");
     } else if (payload.state === "ready") {
-      const token = transition("ready");
-      if ("hasReply" in payload && payload.hasReply === true) void readNewReply(payload.threadId, token);
+      const hasReply = "hasReply" in payload && payload.hasReply === true;
+      const token = transition("ready", hasReply);
+      if (hasReply) void readNewReply(payload.threadId, token);
       else { cues.current?.ready(); setNotice("Ready. Tap to talk."); }
     }
   });
@@ -251,6 +321,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     setBusy(true);
     setRetryText(null);
     const token = transition("thinking");
+    report("thinking");
     setNotice("Sending your words…");
     try {
       await rpc.call("send", { threadId, text: message });
@@ -326,7 +397,6 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     }
   };
   const startListening = async () => {
-    cues.current?.unlock(); // Called synchronously from the user's tap on iOS.
     stopAudio();
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       startBrowserRecognition();

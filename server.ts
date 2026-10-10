@@ -3,7 +3,13 @@ import { z } from "zod";
 import { registerSpeechHttp } from "./speech-http";
 
 const threadId = z.string().min(1).max(200);
+const audioEvent = z.enum(["thinking", "thinking-play", "thinking-playing", "thinking-pause", "thinking-failed", "pulse", "context", "cue-play", "cue-stop", "speech-prepare", "speech-ready", "speech-play", "speech-playing", "speech-pause", "speech-ended", "speech-error", "speech-cancel", "speech-failed"]);
+const audioDetail = z.enum(["none", "running", "suspended", "interrupted", "closed", "playing", "paused", "ended", "aborted", "not-allowed", "network", "other"]);
 export const rpcContract = defineRpcContract({
+  audioDiagnostic: {
+    input: z.object({ session: z.string().uuid(), event: audioEvent, detail: audioDetail, elapsedMs: z.number().int().min(0).max(3_600_000) }).strict(),
+    output: z.object({ recorded: z.boolean() }),
+  },
   latest: {
     input: z.object({ threadId }),
     output: z.object({ text: z.string().nullable() }),
@@ -20,7 +26,15 @@ export const rpcContract = defineRpcContract({
 
 export default function plugin(bb: BbPluginApi) {
   registerSpeechHttp(bb);
+  let windowStart = Date.now();
+  let count = 0;
   bb.rpc.register(rpcContract, {
+    audioDiagnostic: ({ session, event, detail, elapsedMs }) => {
+      if (Date.now() - windowStart >= 60_000) { windowStart = Date.now(); count = 0; }
+      if (++count > 120) return { recorded: false };
+      bb.log.info(`audio session=${session} event=${event} detail=${detail} elapsedMs=${elapsedMs}`);
+      return { recorded: true };
+    },
     latest: async ({ threadId }) => {
       const result = await bb.sdk.threads.output({ threadId });
       return { text: result.output };

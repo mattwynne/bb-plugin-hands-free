@@ -24,6 +24,19 @@ describe("hands-free", () => {
     await harness.lifecycle.dispose();
   });
 
+  it("records bounded audio lifecycle events without accepting reply text or arbitrary errors", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "hands-free" });
+    plugin(bb);
+    const input = { session: "51c0b6db-5c61-4094-bbc3-ae5373abc18d", event: "speech-failed", detail: "aborted", elapsedMs: 123 };
+    expect(await harness.behavior.callRpc("audioDiagnostic", input)).toEqual({ recorded: true });
+    expect(harness.logEntries.some(entry => entry.message.includes("event=speech-failed detail=aborted elapsedMs=123"))).toBe(true);
+    await expect(harness.behavior.callRpc("audioDiagnostic", { ...input, text: "Private answer" })).rejects.toThrow();
+    await expect(harness.behavior.callRpc("audioDiagnostic", { ...input, detail: "Private error details" })).rejects.toThrow();
+    for (let i = 1; i < 120; i++) await harness.behavior.callRpc("audioDiagnostic", input);
+    expect(await harness.behavior.callRpc("audioDiagnostic", input)).toEqual({ recorded: false });
+    await harness.lifecycle.dispose();
+  });
+
   it("reads only the requested thread and broadcasts an id without content", async () => {
     const output = vi.fn(async () => ({ output: "Private answer" }));
     const { bb, harness } = createFakePluginHost({ pluginId: "hands-free", sdk: { threads: { output } } });

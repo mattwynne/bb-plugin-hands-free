@@ -19,6 +19,7 @@ export function registerSpeechHttp(bb: BbPluginApi, synthesize = synthesizeSpeec
 
   bb.http.route("GET", "/voices", () => json({ voices: voiceCatalog() }), { auth: "local" });
   bb.http.route("POST", "/speech/prepare", async context => {
+    const startedAt = Date.now();
     sweep();
     if (disposed || active.size >= MAX_ACTIVE || jobs.size + active.size >= MAX_JOBS) return json({ error: "Speech is busy. Try again shortly.", code: "busy" }, 429);
     const controller = new AbortController();
@@ -43,9 +44,11 @@ export function registerSpeechHttp(bb: BbPluginApi, synthesize = synthesizeSpeec
       const audioId = randomUUID();
       const expiresAt = Date.now() + TTL_MS;
       jobs.set(audioId, { audio, expiresAt });
+      bb.log.info(`speech prepare=ok elapsedMs=${Date.now() - startedAt} bytes=${audio.byteLength}`);
       return json({ audioId, url: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http/speech/audio?id=${audioId}`, expiresAt });
     } catch (error) {
       const safe = error instanceof SpeechError ? error : new SpeechError("upstream", "Speech synthesis failed. Try again.");
+      bb.log.warn(`speech prepare=${safe.code} status=${safe.status} elapsedMs=${Date.now() - startedAt}`);
       return json({ error: safe.message, code: safe.code }, safe.status);
     } finally {
       clearTimeout(inputTimer);
@@ -56,7 +59,8 @@ export function registerSpeechHttp(bb: BbPluginApi, synthesize = synthesizeSpeec
   bb.http.route("GET", "/speech/audio", context => {
     sweep();
     const job = jobs.get(context.req.query("id") ?? "");
-    if (!job) return json({ error: "Unknown or expired audio.", code: "not_found" }, 404);
+    if (!job) { bb.log.warn("speech audio=not_found"); return json({ error: "Unknown or expired audio.", code: "not_found" }, 404); }
+    bb.log.info(`speech audio=served bytes=${job.audio.byteLength}`);
     return new Response(job.audio as BodyInit, { headers: { ...HEADERS, "Content-Type": "audio/mpeg", "Content-Length": String(job.audio.byteLength) } });
   }, { auth: "local" });
   bb.http.route("DELETE", "/speech/audio", context => {

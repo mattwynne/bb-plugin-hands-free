@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { createMediaReadyCue, READY_CUE_GAIN, readyCueEnvelope } from "./media-ready-cue";
+import { createMediaReadyCue, createThinkingLoopUrl, READY_CUE_GAIN, readyCueEnvelope } from "./media-ready-cue";
 import { Blob as NodeBlob } from "node:buffer";
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -103,6 +103,29 @@ it("uses a cached falling 659→523 Hz reply cue without creating another player
   cue.dispose();
   cue.dispose();
   expect(revokeObjectURL.mock.calls).toEqual([["blob:cue-1"], ["blob:cue-2"]]);
+});
+
+it("keeps a five-second quiet media track active between thinking notes", async () => {
+  let blob: Blob | null = null;
+  vi.stubGlobal("Blob", NodeBlob);
+  vi.stubGlobal("URL", { createObjectURL: (value: Blob) => { blob = value; return "blob:thinking"; }, revokeObjectURL: vi.fn() });
+  expect(createThinkingLoopUrl()).toBe("blob:thinking");
+  const view = new DataView(await blob!.arrayBuffer());
+  expect(view.getUint32(24, true)).toBe(16000);
+  expect(view.byteLength).toBe(44 + 5 * 16000 * 2);
+  let peak = 0;
+  let firstNotePeak = 0;
+  let tailPeak = 0;
+  for (let frame = 0; frame < 5 * 16000; frame++) {
+    const amplitude = Math.abs(view.getInt16(44 + frame * 2, true));
+    peak = Math.max(peak, amplitude);
+    if (frame >= 16000 * 1.2 && frame < 16000 * 1.4) firstNotePeak = Math.max(firstNotePeak, amplitude);
+    if (frame >= 16000 * 2) tailPeak = Math.max(tailPeak, amplitude);
+  }
+  expect(tailPeak).toBe(0);
+  expect(firstNotePeak).toBeGreaterThan(2800);
+  expect(peak / 32767).toBeGreaterThan(0.13);
+  expect(peak / 32767).toBeLessThanOrEqual(READY_CUE_GAIN);
 });
 
 it("creates and disposes a local WAV media element without Web Audio", () => {

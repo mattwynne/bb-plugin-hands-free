@@ -74,7 +74,7 @@ afterEach(() => {
 
 it("reuses the cue player through recording, finish, and an Edge reply without breaking capture", async () => {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
-  const createObjectURL = vi.fn().mockReturnValueOnce("blob:shared-cue").mockReturnValueOnce("blob:tap-cue").mockReturnValueOnce("blob:reply-cue");
+  const createObjectURL = vi.fn().mockReturnValueOnce("blob:thinking").mockReturnValueOnce("blob:shared-cue").mockReturnValueOnce("blob:tap-cue").mockReturnValueOnce("blob:reply-cue");
   vi.stubGlobal("URL", { createObjectURL, revokeObjectURL: vi.fn() });
   const stopTracks = vi.fn();
   Object.defineProperty(navigator, "mediaDevices", {
@@ -99,6 +99,7 @@ it("reuses the cue player through recording, finish, and an Edge reply without b
   class FakeAudio {
     onended: (() => void) | null = null;
     onerror: (() => void) | null = null;
+    loop = false;
     constructor(public src: string) { players.push(this); }
     play = vi.fn(async () => {});
     pause = vi.fn();
@@ -115,9 +116,10 @@ it("reuses the cue player through recording, finish, and an Edge reply without b
   vi.stubGlobal("fetch", fetchMock);
 
   const sent = vi.fn(async () => ({ accepted: true }));
+  let latestText = "**The test** is [fixed](https://example.com).";
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-    rpc: { send: sent, latest: async () => ({ text: "**The test** is [fixed](https://example.com)." }), state: async () => ({ state: "ready" }) },
+    rpc: { send: sent, latest: async () => ({ text: latestText }), state: async () => ({ state: "ready" }) },
   });
   expect(slot.queryByText("Latest agent reply")).toBeNull();
   expect(slot.queryByText("Read reply")).toBeNull();
@@ -148,14 +150,20 @@ it("reuses the cue player through recording, finish, and an Edge reply without b
   expect(fetchMock).toHaveBeenCalledWith("/api/v1/system/voice-transcription", expect.objectContaining({ method: "POST" }));
 
   expect((slot.getByRole("button", { name: "Working" }) as HTMLButtonElement).disabled).toBe(true);
+  Object.defineProperty(players[0]!, "ended", { value: true });
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "thinking" });
+  expect(players[0]!.pause).not.toHaveBeenCalled();
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
-  await waitFor(() => expect(players[1]?.play).toHaveBeenCalledOnce());
+  await waitFor(() => expect(players[1]?.play).toHaveBeenCalledTimes(2));
   expect(fetchMock).toHaveBeenCalledWith("/api/v1/plugins/hands-free/http/speech/prepare", expect.objectContaining({
     body: expect.stringContaining('"text":"The test is fixed."'),
   }));
   const cuePlayer = players[0]!;
   const player = players[1];
   expect(players).toHaveLength(2);
+  expect(player!.src).toBe("/api/v1/plugins/hands-free/http/speech/audio?id=audio-1");
+  expect(player!.loop).toBe(false);
+  expect(player!.pause).not.toHaveBeenCalled();
   expect(cuePlayer.src).toBe("blob:shared-cue");
   expect(cuePlayer.play).toHaveBeenCalledTimes(2); // capture started, finish; no opening cue
   expect(stopTracks).toHaveBeenCalledOnce();
@@ -164,22 +172,39 @@ it("reuses the cue player through recording, finish, and an Edge reply without b
   expect(playbackControl.querySelector('[data-icon="Square"]')?.className).toContain("fill-current");
   expect(slot.queryByText("The test is fixed.")).toBeNull();
   await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_2", state: "ready", hasReply: true });
-  expect(player!.play).toHaveBeenCalledOnce();
+  expect(player!.play).toHaveBeenCalledTimes(2);
   vi.useFakeTimers();
+  Object.defineProperty(player, "ended", { value: true, configurable: true });
   await act(async () => {
     player!.onended?.();
   });
   expect(cuePlayer.play).toHaveBeenCalledTimes(3); // post-reply: distinct source, same player
   expect(cuePlayer.src).toBe("blob:reply-cue");
-  expect(createObjectURL).toHaveBeenCalledTimes(3); // cached finish, tap, and reply WAVs
+  expect(createObjectURL).toHaveBeenCalledTimes(4);
   const pauses = cuePlayer.pause.mock.calls.length;
   if (player) expect(player.pause).not.toHaveBeenCalled();
   await act(async () => { await vi.advanceTimersByTimeAsync(1199); });
   expect(cuePlayer.pause).toHaveBeenCalledTimes(pauses);
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-  expect(cuePlayer.pause).toHaveBeenCalledTimes(pauses + 1);
+  expect(cuePlayer.pause).toHaveBeenCalledTimes(pauses);
   expect(cuePlayer.removeAttribute).not.toHaveBeenCalled();
-  if (player) expect(player.pause).toHaveBeenCalledOnce();
+  if (player) {
+    expect(player.pause).not.toHaveBeenCalled();
+    expect(player.removeAttribute).not.toHaveBeenCalled();
+    expect(player.load).not.toHaveBeenCalled();
+  }
+  vi.useRealTimers();
+  latestText = "Another reply";
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "thinking" });
+  expect(players).toHaveLength(2);
+  expect(player!.src).toBe("blob:thinking");
+  expect(player!.loop).toBe(true);
+  Object.defineProperty(player, "ended", { value: false, configurable: true });
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await waitFor(() => expect(player!.play).toHaveBeenCalledTimes(4));
+  expect(player!.loop).toBe(false);
+  expect(player!.pause).not.toHaveBeenCalled();
+  expect(players).toHaveLength(2);
 });
 
 it("stops Edge playback without reviving its reply cue from late events", async () => {
@@ -207,6 +232,28 @@ it("stops Edge playback without reviving its reply cue from late events", async 
   act(() => late?.());
   expect(players).toHaveLength(1);
   expect(players[0]!.play).toHaveBeenCalledOnce();
+});
+
+it("reports a browser playback abort without leaking the reply", async () => {
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:cue", revokeObjectURL: vi.fn() });
+  vi.stubGlobal("Audio", class {
+    onended = null; onerror = null; onplaying = null; onpause = null;
+    play = vi.fn(async () => { throw new DOMException("The operation was aborted", "AbortError"); });
+    pause() {} removeAttribute() {} load() {}
+    constructor(public src: string) {}
+  });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/voices")
+    ? { ok: true, json: async () => ({ voices: [{ id: "edge:en-GB-SoniaNeural", name: "Sonia", engine: "edge", language: "en-GB", available: true }] }) }
+    : { ok: true, json: async () => ({ audioId: "a", url: "/api/v1/plugins/hands-free/http/speech/audio?id=a" }) }));
+  const diagnostic = vi.fn(async () => ({ recorded: true }));
+  slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
+    sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
+    rpc: { state: async () => ({ state: "ready" }), latest: async () => ({ text: "Private answer" }), audioDiagnostic: diagnostic },
+  });
+  await waitFor(() => expect(slot!.getByRole("status").textContent).toBe("Ready. Tap to talk."));
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await waitFor(() => expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ event: "speech-failed", detail: "aborted" })));
+  expect(JSON.stringify(diagnostic.mock.calls)).not.toContain("Private answer");
 });
 
 it("shows the scrolling indicator during browser recognition and removes it on cancellation", async () => {

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-10
+
+- Keep the car stereo's audio playback active while the agent works, and hand off the thinking tones to spoken replies without an unnecessary pause.
+- Make the periodic thinking tones easier to hear in a car while preserving the recording and reply confirmation sounds.
+- Add privacy-bounded audio diagnostics to help troubleshoot interrupted or silent playback without logging conversations or recordings.
+
 ## [0.2.0] - 2026-10-09
 
 - Add Hands-Free voice settings to choose an Edge neural voice and speaking speed, with a shortcut from the Hands-Free page. Existing device/OpenAI voice choices migrate to the default Sonia voice while retaining speed.
