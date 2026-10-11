@@ -47,6 +47,8 @@ describe("hands-free", () => {
     expect(harness.realtimeSignals).toContainEqual({ channel: "hands-free/thread-state", payload: { threadId: "th_1", state: "ready", hasReply: true } });
     await harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "th_1" }), lastAssistantText: null });
     expect(harness.realtimeSignals.at(-1)).toEqual({ channel: "hands-free/thread-state", payload: { threadId: "th_1", state: "ready", hasReply: false } });
+    await harness.behavior.emitThreadEvent("thread.archived", { thread: makeThreadResponse({ id: "th_1" }) });
+    expect(harness.realtimeSignals.at(-1)).toEqual({ channel: "hands-free/thread-state", payload: { threadId: "th_1", state: "archived" } });
     await harness.lifecycle.dispose();
   });
 

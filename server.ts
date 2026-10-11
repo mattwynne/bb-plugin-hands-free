@@ -62,6 +62,9 @@ export default function plugin(bb: BbPluginApi) {
       threadId: thread.id, state: "ready", hasReply: Boolean(lastAssistantText?.trim()),
     });
   });
+  bb.events.on("thread.archived", ({ thread }) => {
+    bb.realtime.publish("hands-free/thread-state", { threadId: thread.id, state: "archived" });
+  });
   bb.events.on("thread.failed", ({ thread }) => {
     bb.realtime.publish("hands-free/thread-state", { threadId: thread.id, state: "failed" });
   });

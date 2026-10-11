@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-11
+
+- Keep the selected thread and Stop audio control visible when the thread archives, so its final reply can finish playing. Show that the thread has archived and prevent new dictation into it.
+
 ## [0.2.1] - 2026-10-10
 
 - Keep the car stereo's audio playback active while the agent works, and hand off the thinking tones to spoken replies without an unnecessary pause.

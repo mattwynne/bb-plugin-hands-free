@@ -234,6 +234,35 @@ it("stops Edge playback without reviving its reply cue from late events", async 
   expect(players[0]!.play).toHaveBeenCalledOnce();
 });
 
+it("keeps the final reply playing when its thread archives", async () => {
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:cue", revokeObjectURL: vi.fn() });
+  const players: Array<{ play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>; onended: (() => void) | null }> = [];
+  vi.stubGlobal("Audio", class {
+    onended: (() => void) | null = null;
+    onerror = null; onplaying = null; onpause = null;
+    play = vi.fn(async () => {});
+    pause = vi.fn(); removeAttribute = vi.fn(); load = vi.fn();
+    constructor(public src: string) { players.push(this); }
+  });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/voices")
+    ? { ok: true, json: async () => ({ voices: [{ id: "edge:en-GB-SoniaNeural", name: "Sonia", engine: "edge", language: "en-GB", available: true }] }) }
+    : { ok: true, json: async () => ({ audioId: "a", url: "/api/v1/plugins/hands-free/http/speech/audio?id=a" }) }));
+  slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
+    sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
+    rpc: { state: async () => ({ state: "ready" }), latest: async () => ({ text: "Final reply" }) },
+  });
+  await waitFor(() => expect(slot!.getByRole("status").textContent).toBe("Ready. Tap to talk."));
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "archived" });
+  expect(slot.getByText(/Thread archived.*final reply can still play/i)).toBeTruthy();
+  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await waitFor(() => expect(players[0]?.play).toHaveBeenCalledOnce());
+  expect(slot.getByText(/Thread archived.*reply is still playing/i)).toBeTruthy();
+  expect((slot.getByRole("button", { name: "Stop audio" }) as HTMLButtonElement).disabled).toBe(false);
+  expect(players[0]!.pause).not.toHaveBeenCalled();
+  fireEvent.click(slot.getByRole("button", { name: "Stop audio" }));
+  expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(true);
+});
+
 it("reports a browser playback abort without leaking the reply", async () => {
   vi.stubGlobal("URL", { createObjectURL: () => "blob:cue", revokeObjectURL: vi.fn() });
   vi.stubGlobal("Audio", class {

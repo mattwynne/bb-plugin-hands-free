@@ -37,7 +37,17 @@ function HandsFreePage({ subPath }: { subPath: string }) {
   const { threads, status: threadsStatus } = experimental_useSidebarThreads();
   let selectedId = "";
   try { selectedId = decodeURIComponent(subPath.split("/")[0] ?? ""); } catch { /* Invalid URL: leave selection empty. */ }
-  const selected = threads.find((thread) => thread.id === selectedId);
+  // The sidebar can drop an archived thread while its final reply is still
+  // being prepared or played. Retain only the current selection's identity.
+  const selectedSnapshot = useRef<(typeof threads)[number] | null>(null);
+  const listed = threads.find((thread) => thread.id === selectedId);
+  if (listed) selectedSnapshot.current = listed;
+  else if (selectedSnapshot.current?.id !== selectedId) selectedSnapshot.current = null;
+  const selected = listed ?? selectedSnapshot.current;
+  const [archivedId, setArchivedId] = useState<string | null>(null);
+  const unavailable = Boolean(selectedId && threadsStatus === "ready" && !listed);
+  const archived = Boolean(selected?.isArchived || archivedId === selectedId);
+  const canDictate = Boolean(listed && !archived);
   const [fallbackText, setFallbackText] = useState("");
   const [showFallback, setShowFallback] = useState(false);
   const [retryText, setRetryText] = useState<string | null>(null);
@@ -236,6 +246,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     setFallbackText("");
     setShowFallback(false);
     setRetryText(null);
+    setArchivedId(null);
     lastSpoken.current = null;
     active.current = true;
     const token = transition("loading");
@@ -287,7 +298,11 @@ function HandsFreePage({ subPath }: { subPath: string }) {
   useRealtime("hands-free/thread-state", (payload) => {
     if (!payload || typeof payload !== "object" || !("threadId" in payload) || !("state" in payload)) return;
     if (typeof payload.threadId !== "string" || payload.threadId !== selectedRef.current || !active.current) return;
-    if (payload.state === "thinking") {
+    if (payload.state === "archived") {
+      setArchivedId(payload.threadId);
+      if (listening || recorder.current || recognition.current) cancelCapture();
+      // Keep speech and any in-flight latest/prepare request alive.
+    } else if (payload.state === "thinking") {
       report("thinking");
       if (listening || recorder.current || recognition.current) cancelCapture();
       if (!thinking.current) stopAudio();
@@ -477,10 +492,10 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     setListening(false);
     setWaveformStream(null);
   };
-  const controlState = !selected
-    ? "start"
-    : speaking
-      ? "playback"
+  const controlState = speaking
+    ? "playback"
+    : !canDictate
+      ? "start"
       : listening
         ? "complete"
         : busy || phase === "loading" || phase === "thinking"
@@ -506,7 +521,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         : controlState === "attention"
           ? "AlertTriangle"
           : "Mic";
-  const controlDisabled = !selected || (!speaking && (busy || phase !== "ready"));
+  const controlDisabled = !speaking && (!canDictate || busy || phase !== "ready");
   return (
     <main className="h-full min-h-0 overflow-y-auto px-4 py-5" aria-label="Hands-Free">
       <div className="mx-auto max-w-xl space-y-5 pb-12">
@@ -520,9 +535,11 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         <select id="hands-free-thread" className="w-full min-h-14 rounded-xl border bg-background px-3 text-base" value={selectedId} onChange={(event) => navigate.toPluginPanel("hands-free", { subPath: encodeURIComponent(event.target.value) })}>
           <option value="">Choose a thread</option>
           {threads.map((thread) => <option key={thread.id} value={thread.id}>{thread.title || thread.titleFallback || thread.id}</option>)}
+          {selected && !listed && <option value={selectedId}>{selected.title || selected.titleFallback || selected.id} (no longer in list)</option>}
         </select>
         {threadsStatus === "error" && <p role="alert">Unable to load threads.</p>}
         {selectedId && !selected && threadsStatus !== "loading" && <p role="alert">Thread not in the current list. Select another thread.</p>}
+        {selected && (archived || unavailable) && <p role="status">{archived ? "Thread archived." : "Thread no longer in the current list."} {speaking ? "The reply is still playing; you can stop it at any time." : "Any final reply can still play here. Choose another thread to dictate."}</p>}
         <div className="flex justify-center py-2">
           <button type="button" disabled={controlDisabled} onClick={speaking ? stopAudio : listening ? stopListening : startListening}
             className="inline-flex size-28 shrink-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-full bg-foreground text-background transition-colors duration-150 hover:bg-foreground/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-40"
@@ -531,11 +548,11 @@ function HandsFreePage({ subPath }: { subPath: string }) {
             {listening && <RecordingWaveform stream={waveformStream} />}
           </button>
         </div>
-        {retryText && <button type="button" disabled={busy || phase !== "ready"} onClick={() => void sendText(retryText, selectedId)} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">Retry sending</button>}
+        {retryText && <button type="button" disabled={!canDictate || busy || phase !== "ready"} onClick={() => void sendText(retryText, selectedId)} className="min-h-16 w-full rounded-xl border px-3 text-lg font-semibold disabled:opacity-40">Retry sending</button>}
         {showFallback && <div className="space-y-3 rounded-xl border p-4">
           <label htmlFor="hands-free-fallback" className="block font-semibold">Keyboard dictation fallback</label>
           <textarea id="hands-free-fallback" rows={3} maxLength={12000} value={fallbackText} onChange={(event) => setFallbackText(event.target.value)} placeholder="Use the iPhone keyboard microphone" className="w-full rounded-xl border bg-background p-4 text-lg" />
-          <button type="button" disabled={!selected || !fallbackText.trim() || busy || phase !== "ready"} onClick={() => {
+          <button type="button" disabled={!canDictate || !fallbackText.trim() || busy || phase !== "ready"} onClick={() => {
             const text = fallbackText;
             setFallbackText("");
             void sendText(text, selectedId);
