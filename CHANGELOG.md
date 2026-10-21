@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Restore spoken replies when Microsoft's neural speech service rejects the older connection authentication.
+
 ## [0.2.2] - 2026-10-11
 
 - Keep the selected thread and Stop audio control visible when the thread archives, so its final reply can finish playing. Show that the thread has archived and prevent new dictation into it.
