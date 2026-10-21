@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Fix Microsoft Edge speech preparation failing with 502 when Microsoft rejects the old v1 handshake. Use v2 Sec-MS-GEC tokens and a fresh MUID cookie, with independent upstream test vectors. No API key or additional service is required.
+- Include attribution and LGPL-3.0 source/license notices for the ported edge-tts token algorithm.
+
 ## [0.2.2] - 2026-10-11
 
 - Keep the selected thread and Stop audio control visible when the thread archives, so its final reply can finish playing. Show that the thread has archived and prevent new dictation into it.

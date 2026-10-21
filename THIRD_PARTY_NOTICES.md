@@ -1,5 +1,20 @@
 # Third-party notices
 
+## edge-tts — Edge v2 authentication (LGPL-3.0)
+
+`speech-edge-auth.ts` is a TypeScript port of the token algorithm in
+[rany2/edge-tts drm.py](https://github.com/rany2/edge-tts/blob/bd44c1d1aaebdc1db7f47456ee12431b42ec7cac/src/edge_tts/drm.py).
+Copyright (c) rany and edge-tts contributors. The port was made on 2026-10-21:
+Python arbitrary-width arithmetic is replaced by explicit unsigned 32-bit
+operations and `Math.imul`; FILETIME rounding uses BigInt. Network and clock-skew
+helpers are not included. This module remains LGPL-3.0; other existing source
+files retain their respective licenses.
+
+The upstream license notice and LGPL text are in `LICENSES/edge-tts.txt`;
+the accompanying GPL text is in `LICENSES/GPL-3.0.txt`. The readable, modifiable
+module source is distributed in this repository and can be replaced and rebuilt
+using `npm ci && npm run build`. No proprietary binary dependency is introduced.
+
 ## Read Aloud — inspiration and adapted Edge protocol
 
 Hands-Free’s prepare/play pattern and neural voice support were inspired by

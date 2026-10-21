@@ -1,47 +1,24 @@
 // Edge protocol adapted from Chris Sells’ Read Aloud (MIT).
 // See THIRD_PARTY_NOTICES.md for full attribution and license.
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { secMsGec, muid, TRUSTED_CLIENT_TOKEN } from "./speech-edge-auth";
 import WebSocket from "ws";
 
-/** Published client token shared by every Read Aloud client. */
-const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 /** Upstream's pinned Edge client version; this unofficial API may change. */
 export const DEFAULT_CLIENT_VERSION = "143.0.3650.75";
 const BASE = "speech.platform.bing.com/consumer/speech/synthesize/readaloud";
 
 export const DEFAULT_OUTPUT_FORMAT = "audio-24khz-48kbitrate-mono-mp3";
 
-/** Seconds between the Windows FILETIME epoch (1601) and the Unix epoch. */
-const WINDOWS_EPOCH_OFFSET_SECONDS = 11_644_473_600n;
-/** FILETIME is in 100ns units, so five minutes is 3e9 of them. */
-const FIVE_MINUTES_IN_TICKS = 3_000_000_000n;
-
-/**
- * The Sec-MS-GEC token: SHA-256 of the current Windows FILETIME rounded down to
- * a five-minute boundary, concatenated with the trusted client token.
- *
- * BigInt is not optional here. The tick count is ~1.3e17, well past
- * Number.MAX_SAFE_INTEGER, so computing it in floating point silently loses
- * low-order digits and hashes to a token the service rejects.
- */
-function secMsGec(): string {
-  const unixSeconds = BigInt(Math.floor(Date.now() / 1000));
-  const ticks = (unixSeconds + WINDOWS_EPOCH_OFFSET_SECONDS) * 10_000_000n;
-  const rounded = ticks - (ticks % FIVE_MINUTES_IN_TICKS);
-  return createHash("sha256")
-    .update(`${rounded}${TRUSTED_CLIENT_TOKEN}`)
-    .digest("hex")
-    .toUpperCase();
-}
-
 function authQuery(version: string): string {
-  return `Sec-MS-GEC=${secMsGec()}&Sec-MS-GEC-Version=1-${version}`;
+  return `Sec-MS-GEC=${secMsGec()}&Sec-MS-GEC-Version=2-${version}`;
 }
 
 /** Headers the service checks on the upgrade request. */
 function handshakeHeaders(version: string): Record<string, string> {
   const major = version.split(".")[0] ?? "143";
   return {
+    Cookie: `muid=${muid()};`,
     Pragma: "no-cache",
     "Cache-Control": "no-cache",
     Origin: "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold",

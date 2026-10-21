@@ -19,7 +19,11 @@ describe("Edge transport", () => {
   it("escapes SSML, maps speed and completes only on turn.end", async () => {
     const result = synthesizeEdge(options());
     const socket = sockets[0]!;
-    expect(socket.options).toMatchObject({ handshakeTimeout: 10000, maxPayload: 1024 * 1024, followRedirects: false });
+    expect(socket.options).toMatchObject({ handshakeTimeout: 10000, maxPayload: 1024 * 1024, followRedirects: false,
+      headers: { Cookie: expect.stringMatching(/^muid=[0-9A-F]{32};$/) } });
+    const query = new URL(socket.url).searchParams;
+    expect(query.get("Sec-MS-GEC-Version")).toBe("2-143.0.3650.75");
+    expect(query.get("Sec-MS-GEC")).toMatch(/^[0-9A-F]{16}-[0-9A-F]{64}$/);
     socket.emit("open");
     expect(socket.send.mock.calls[1][0]).toContain("rate='+50%'");
     expect(socket.send.mock.calls[1][0]).toContain("&lt;hello &amp; &apos;world&apos;&gt;");
