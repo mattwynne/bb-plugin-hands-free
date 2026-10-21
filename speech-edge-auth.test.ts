@@ -1,0 +1,24 @@
+import { describe, expect, it } from "vitest";
+import { generateSecMsGecV2 } from "./speech-edge-auth";
+
+// Golden values generated with rany2/edge-tts 7.3.1, including a 5-minute boundary.
+// See THIRD_PARTY_NOTICES.md for licensing provenance of the implementation.
+const vectors = [
+  [0, "52BC7A17B50DFEC9-28C4394775C8751CD2F6859C030C06DB1489ACAB3B3A7651831FC26895177ED6"],
+  [1700000000, "2CD23A2CA0B2595A-F3C846C370E05F9CC83ACC5F995C5F5D87A4D0F14CE8936A0F902E64099E38A2"],
+  [1700000100.75, "0919602B5750900A-EC9DD394F23CB5635CF62A0E8E24136DCD32B26D10C543B10082E482D7516397"],
+  [1791590400, "D91FAA74DADAF0CC-659AB95CA7B1F46BAB0EA950E8900FF1BC5699534A302AC475EB101E2D309845"],
+  [1791590699, "D91FAA74DADAF0CC-659AB95CA7B1F46BAB0EA950E8900FF1BC5699534A302AC475EB101E2D309845"],
+  [1791590700, "09F28648AD0B345A-2593251592C652B0F7B1800260260600AB7452B8150E35783F2DC31D713FB68E"],
+  [4102444800, "DD230DB44FEE2FD7-DA0D4FA797866E36C992FABB81DD2F9DB37EB74D675D63228277003DCD3F9F8C"],
+] as const;
+
+describe("Edge v2 authentication", () => {
+  it.each(vectors)("matches the upstream token at %s", (seconds, expected) => {
+    expect(generateSecMsGecV2(seconds)).toBe(expected);
+  });
+  it("is stable within a five-minute window and changes on its boundary", () => {
+    expect(generateSecMsGecV2(1791590699.999)).toBe(generateSecMsGecV2(1791590400));
+    expect(generateSecMsGecV2(1791590700)).not.toBe(generateSecMsGecV2(1791590699));
+  });
+});

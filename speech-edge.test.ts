@@ -8,14 +8,31 @@ vi.mock("ws", () => ({ default: class extends EventEmitter {
   constructor(public url: string, public options: unknown) { super(); sockets.push(this); }
 } }));
 import { synthesizeEdge } from "./speech-edge";
+import { generateSecMsGecV2 } from "./speech-edge-auth";
 const options = (signal = new AbortController().signal) => ({ text: "<hello & 'world'>", voice: "en-US-AriaNeural", speed: 1.5, maxBytes: 4, signal });
 const frame = (bytes: number[]) => {
   const headers = Buffer.from("Path:audio\r\n");
   const length = Buffer.alloc(2); length.writeUInt16BE(headers.length);
   return Buffer.concat([length, headers, Buffer.from(bytes)]);
 };
-beforeEach(() => { sockets.length = 0; });
+beforeEach(() => { sockets.length = 0; vi.restoreAllMocks(); });
 describe("Edge transport", () => {
+  it("pairs a v2 token with the version and fresh MUID on each handshake", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1791590400 * 1000);
+    const first = synthesizeEdge(options());
+    const second = synthesizeEdge(options());
+    const [a, b] = sockets;
+    for (const socket of [a, b]) {
+      const url = new URL(socket.url);
+      expect(url.searchParams.get("Sec-MS-GEC")).toBe(generateSecMsGecV2(1791590400));
+      expect(url.searchParams.get("Sec-MS-GEC-Version")).toBe("2-143.0.3650.75");
+      expect(socket.options.headers.Cookie).toMatch(/^muid=[0-9A-F]{32};$/);
+      expect(socket.options.followRedirects).toBe(false);
+      socket.emit("message", Buffer.from("Path:turn.end"), false);
+    }
+    expect(a.options.headers.Cookie).not.toBe(b.options.headers.Cookie);
+    await Promise.all([first, second]);
+  });
   it("escapes SSML, maps speed and completes only on turn.end", async () => {
     const result = synthesizeEdge(options());
     const socket = sockets[0]!;

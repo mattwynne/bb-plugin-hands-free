@@ -1,7 +1,8 @@
 // Edge protocol adapted from Chris Sells’ Read Aloud (MIT).
 // See THIRD_PARTY_NOTICES.md for full attribution and license.
-import { createHash, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import WebSocket from "ws";
+import { generateSecMsGecV2 } from "./speech-edge-auth";
 
 /** Published client token shared by every Read Aloud client. */
 const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
@@ -11,31 +12,9 @@ const BASE = "speech.platform.bing.com/consumer/speech/synthesize/readaloud";
 
 export const DEFAULT_OUTPUT_FORMAT = "audio-24khz-48kbitrate-mono-mp3";
 
-/** Seconds between the Windows FILETIME epoch (1601) and the Unix epoch. */
-const WINDOWS_EPOCH_OFFSET_SECONDS = 11_644_473_600n;
-/** FILETIME is in 100ns units, so five minutes is 3e9 of them. */
-const FIVE_MINUTES_IN_TICKS = 3_000_000_000n;
-
-/**
- * The Sec-MS-GEC token: SHA-256 of the current Windows FILETIME rounded down to
- * a five-minute boundary, concatenated with the trusted client token.
- *
- * BigInt is not optional here. The tick count is ~1.3e17, well past
- * Number.MAX_SAFE_INTEGER, so computing it in floating point silently loses
- * low-order digits and hashes to a token the service rejects.
- */
-function secMsGec(): string {
-  const unixSeconds = BigInt(Math.floor(Date.now() / 1000));
-  const ticks = (unixSeconds + WINDOWS_EPOCH_OFFSET_SECONDS) * 10_000_000n;
-  const rounded = ticks - (ticks % FIVE_MINUTES_IN_TICKS);
-  return createHash("sha256")
-    .update(`${rounded}${TRUSTED_CLIENT_TOKEN}`)
-    .digest("hex")
-    .toUpperCase();
-}
-
 function authQuery(version: string): string {
-  return `Sec-MS-GEC=${secMsGec()}&Sec-MS-GEC-Version=1-${version}`;
+  return `Sec-MS-GEC=${generateSecMsGecV2(Date.now() / 1000)}` +
+    `&Sec-MS-GEC-Version=2-${version}`;
 }
 
 /** Headers the service checks on the upgrade request. */
@@ -54,6 +33,7 @@ function handshakeHeaders(version: string): Record<string, string> {
     "Sec-CH-UA": `" Not;A Brand";v="99", "Microsoft Edge";v="${major}", "Chromium";v="${major}"`,
     "Sec-CH-UA-Mobile": "?0",
     "Sec-CH-UA-Platform": '"Windows"',
+    Cookie: `muid=${randomBytes(16).toString("hex").toUpperCase()};`,
   };
 }
 

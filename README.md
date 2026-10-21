@@ -1,6 +1,6 @@
 # BB Hands-Free
 
-A large-button, tap-to-talk and spoken-reply companion for **BB in a mobile browser or the iPhone app**. Spoken replies use Microsoft Edge neural voices only. No Read Aloud installation is needed. Neural speech support was inspired by [Chris Sells’ Read Aloud](https://github.com/csells/bb-plugins/tree/HEAD/plugins/read-aloud); adapted Edge protocol code retains its full MIT license in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+A large-button, tap-to-talk and spoken-reply companion for **BB in a mobile browser or the iPhone app**. Spoken replies use Microsoft Edge neural voices only. No Read Aloud installation is needed. Neural speech support was inspired by [Chris Sells’ Read Aloud](https://github.com/csells/bb-plugins/tree/HEAD/plugins/read-aloud); adapted Edge transport retains its MIT attribution; the new v2 authentication module is LGPL-3.0-derived (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
 ## Install
 
@@ -33,6 +33,8 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+The Edge v2 token implementation in [`speech-edge-auth.ts`](speech-edge-auth.ts) is LGPL-3.0-derived. Its source is included here with [provenance and notices](THIRD_PARTY_NOTICES.md), [LGPLv3](LGPL-3.0.txt), and [GPLv3](GPL-3.0.txt). Recipients may modify it and rebuild the combined plugin using the commands above with a compatible `bb` CLI, then install their modified directory with `bb plugin install .` or reload an existing local-path installation with `bb plugin reload hands-free`. Do not restrict modification or reverse engineering to debug it. Binary-only redistribution needs a separate LGPLv3 §4 compliance review, including corresponding source and a practical way to recombine and run the modified module; the bundled server is not a replaceable shared library. The other plugin code is not automatically relicensed by this module.
 
 `server.ts` exposes schema-validated RPC calls for latest output, thread state, send, and bounded audio diagnostics, and publishes active/idle/failure/interaction notifications without broadcasting message text. `app.tsx` owns speech state in the page and releases the microphone and audio on thread change/unmount. No transcripts or speech audio are persisted. The plugin owns its speech HTTP routes and does not call another plugin's private APIs. Request text and MP3 data exist temporarily in server memory during synthesis; prepared audio expires after two minutes, and client cleanup or plugin disposal release it.
 
