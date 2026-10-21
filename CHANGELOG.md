@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-21
+
 - Restore spoken replies when Microsoft's neural speech service rejects the older connection authentication.
 
 ## [0.2.2] - 2026-10-11
