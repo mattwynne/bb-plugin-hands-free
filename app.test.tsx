@@ -5,6 +5,31 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 
 const app = await loadPluginApp(() => import("./app"));
+type FeedState = "ready" | "thinking" | "attention" | "failed";
+type ReplyEvent = { turnId: string; itemId: string; kind: "start" | "delta" | "complete"; text: string };
+function replyFeed(initial: "ready" | "thinking" = "ready") {
+  let state: FeedState = initial;
+  let archived = false;
+  const events: ReplyEvent[] = [];
+  return {
+    replies: async (input: unknown) => {
+      const { after } = input as { after?: number };
+      return { state, archived, cursor: events.length, more: false, events: after === undefined ? [] : events.slice(after) };
+    },
+    setState(next: FeedState) { state = next; },
+    append(...items: ReplyEvent[]) { events.push(...items); },
+    async update(page: ReturnType<typeof renderSlot>, phase: FeedState | "archived", text?: string) {
+      if (phase === "archived") archived = true;
+      else state = phase;
+      if (text) {
+        const id = String(events.length);
+        events.push({ kind: "complete", turnId: id, itemId: id, text });
+      }
+      await page.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1" });
+    },
+  };
+}
+
 it("registers Hands-Free on the existing sidebar route", () => {
   expect(app.settingsSections).toHaveLength(1);
   expect(app.settingsSections[0]).toMatchObject({ id: "voice" });
@@ -45,7 +70,7 @@ it("keeps page guidance concise and relevant to the selected thread", async () =
 
   const selectedPage = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-    rpc: { state: async () => ({ state: "ready" }) },
+    rpc: { replies: replyFeed().replies },
   });
   await waitFor(() => expect(selectedPage.getByRole("status").textContent).toBe("Ready. Tap to talk."));
   expect(selectedPage.getByText("Keep BB open and unlocked while recording or listening.")).toBeTruthy();
@@ -115,11 +140,11 @@ it("reuses the cue player through recording, finish, and an Edge reply without b
     : { ok: true, json: async () => ({ audioId: "audio-1", url: "/api/v1/plugins/hands-free/http/speech/audio?id=audio-1", expiresAt: Date.now() + 120000 }) });
   vi.stubGlobal("fetch", fetchMock);
 
-  const sent = vi.fn(async () => ({ accepted: true }));
-  let latestText = "**The test** is [fixed](https://example.com).";
+  const sent = vi.fn(async (_input: unknown) => ({ accepted: true }));
+  const feed = replyFeed();
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-    rpc: { send: sent, latest: async () => ({ text: latestText }), state: async () => ({ state: "ready" }) },
+    rpc: { send: (input: unknown) => { feed.setState("thinking"); return sent(input); }, replies: feed.replies },
   });
   expect(slot.queryByText("Latest agent reply")).toBeNull();
   expect(slot.queryByText("Read reply")).toBeNull();
@@ -151,9 +176,9 @@ it("reuses the cue player through recording, finish, and an Edge reply without b
 
   expect((slot.getByRole("button", { name: "Working" }) as HTMLButtonElement).disabled).toBe(true);
   Object.defineProperty(players[0]!, "ended", { value: true });
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "thinking" });
+  await feed.update(slot, "thinking");
   expect(players[0]!.pause).not.toHaveBeenCalled();
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await feed.update(slot, "ready", "**The test** is [fixed](https://example.com).");
   await waitFor(() => expect(players[1]?.play).toHaveBeenCalledTimes(2));
   expect(fetchMock).toHaveBeenCalledWith("/api/v1/plugins/hands-free/http/speech/prepare", expect.objectContaining({
     body: expect.stringContaining('"text":"The test is fixed."'),
@@ -194,13 +219,13 @@ it("reuses the cue player through recording, finish, and an Edge reply without b
     expect(player.load).not.toHaveBeenCalled();
   }
   vi.useRealTimers();
-  latestText = "Another reply";
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "thinking" });
+
+  await feed.update(slot, "thinking");
   expect(players).toHaveLength(2);
   expect(player!.src).toBe("blob:thinking");
   expect(player!.loop).toBe(true);
   Object.defineProperty(player, "ended", { value: false, configurable: true });
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await feed.update(slot, "ready", "Another reply");
   await waitFor(() => expect(player!.play).toHaveBeenCalledTimes(4));
   expect(player!.loop).toBe(false);
   expect(player!.pause).not.toHaveBeenCalled();
@@ -220,12 +245,13 @@ it("stops Edge playback without reviving its reply cue from late events", async 
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/voices")
     ? { ok: true, json: async () => ({ voices: [{ id: "edge:en-GB-SoniaNeural", name: "Sonia", engine: "edge", language: "en-GB", available: true }] }) }
     : { ok: true, json: async () => ({ audioId: "a", url: "/api/v1/plugins/hands-free/http/speech/audio?id=a" }) }));
+  const feed = replyFeed();
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-    rpc: { state: async () => ({ state: "ready" }), latest: async () => ({ text: "Reply" }) },
+    rpc: { replies: feed.replies },
   });
   await waitFor(() => expect(slot!.getByRole("status").textContent).toBe("Ready. Tap to talk."));
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await feed.update(slot, "ready", "Reply");
   await waitFor(() => expect(players[0]?.play).toHaveBeenCalledOnce());
   const late = players[0]!.onended;
   fireEvent.click(slot.getByRole("button", { name: "Stop audio" }));
@@ -247,14 +273,15 @@ it("keeps the final reply playing when its thread archives", async () => {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/voices")
     ? { ok: true, json: async () => ({ voices: [{ id: "edge:en-GB-SoniaNeural", name: "Sonia", engine: "edge", language: "en-GB", available: true }] }) }
     : { ok: true, json: async () => ({ audioId: "a", url: "/api/v1/plugins/hands-free/http/speech/audio?id=a" }) }));
+  const feed = replyFeed();
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-    rpc: { state: async () => ({ state: "ready" }), latest: async () => ({ text: "Final reply" }) },
+    rpc: { replies: feed.replies },
   });
   await waitFor(() => expect(slot!.getByRole("status").textContent).toBe("Ready. Tap to talk."));
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "archived" });
+  await feed.update(slot, "archived");
   expect(slot.getByText(/Thread archived.*final reply can still play/i)).toBeTruthy();
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await feed.update(slot, "ready", "Final reply");
   await waitFor(() => expect(players[0]?.play).toHaveBeenCalledOnce());
   expect(slot.getByText(/Thread archived.*reply is still playing/i)).toBeTruthy();
   expect((slot.getByRole("button", { name: "Stop audio" }) as HTMLButtonElement).disabled).toBe(false);
@@ -275,12 +302,13 @@ it("reports a browser playback abort without leaking the reply", async () => {
     ? { ok: true, json: async () => ({ voices: [{ id: "edge:en-GB-SoniaNeural", name: "Sonia", engine: "edge", language: "en-GB", available: true }] }) }
     : { ok: true, json: async () => ({ audioId: "a", url: "/api/v1/plugins/hands-free/http/speech/audio?id=a" }) }));
   const diagnostic = vi.fn(async () => ({ recorded: true }));
+  const feed = replyFeed();
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-    rpc: { state: async () => ({ state: "ready" }), latest: async () => ({ text: "Private answer" }), audioDiagnostic: diagnostic },
+    rpc: { replies: feed.replies, audioDiagnostic: diagnostic },
   });
   await waitFor(() => expect(slot!.getByRole("status").textContent).toBe("Ready. Tap to talk."));
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await feed.update(slot, "ready", "Private answer");
   await waitFor(() => expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ event: "speech-failed", detail: "aborted" })));
   expect(JSON.stringify(diagnostic.mock.calls)).not.toContain("Private answer");
 });
@@ -297,24 +325,25 @@ it("shows the scrolling indicator during browser recognition and removes it on c
     start = vi.fn(); stop = vi.fn(); abort = abort;
   }
   vi.stubGlobal("SpeechRecognition", FakeRecognition);
+  const feed = replyFeed();
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-    rpc: { state: async () => ({ state: "ready" }) },
+    rpc: { replies: feed.replies },
   });
   await waitFor(() => expect((slot!.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(slot.getByRole("button", { name: "Start dictating" }));
   expect(slot.getByRole("button", { name: "Finish dictating" }).querySelector("canvas")).not.toBeNull();
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "thinking" });
+  await feed.update(slot, "thinking");
   expect(abort).toHaveBeenCalledOnce();
   expect(slot.container.querySelector("canvas")).toBeNull();
 });
 
 it("locks the microphone during agent work and unlocks it after a silent idle or failure", async () => {
+  const feed = replyFeed("thinking");
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
     rpc: {
-      state: async () => ({ state: "thinking" }),
-      latest: async () => ({ text: null }),
+      replies: feed.replies,
       send: async () => ({ accepted: true }),
     },
   });
@@ -326,15 +355,15 @@ it("locks the microphone during agent work and unlocks it after a silent idle or
   expect(workingControl.querySelector('[data-icon="Spinner"]')?.className).toContain("motion-reduce:animate-none");
   fireEvent.click(slot.getByRole("button", { name: "Thread activity" }));
   expect(slot.getByTestId("bb-thread-chat").dataset.variant).toBe("timeline");
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "attention" });
+  await feed.update(slot, "attention");
   const attentionControl = slot.getByRole("button", { name: "Needs attention" }) as HTMLButtonElement;
   expect(attentionControl.disabled).toBe(true);
   expect(attentionControl.querySelector('[data-icon="AlertTriangle"]')).not.toBeNull();
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: false });
+  await feed.update(slot, "ready");
   expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "thinking" });
+  await feed.update(slot, "thinking");
   expect((slot.getByRole("button", { name: "Working" }) as HTMLButtonElement).disabled).toBe(true);
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "failed" });
+  await feed.update(slot, "failed");
   expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
 });
 
@@ -348,12 +377,56 @@ it("migrates a retired selection for Edge replies", async () => {
     ? { ok: true, json: async () => ({ voices: [{ id: "edge:en-GB-SoniaNeural", name: "Sonia", engine: "edge", language: "en-GB", available: true }] }) }
     : { ok: true, json: async () => ({ audioId: "a", url: "/api/v1/plugins/hands-free/http/speech/audio?id=a" }) });
   vi.stubGlobal("fetch", fetcher);
+  const feed = replyFeed();
   slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
     sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
-    rpc: { state: async () => ({ state: "ready" }), latest: async () => ({ text: "Hello there" }) },
+    rpc: { replies: feed.replies },
   });
   await waitFor(() => expect(slot!.getByRole("status").textContent).toBe("Ready. Tap to talk."));
-  await slot.behavior.emitRealtime("hands-free/thread-state", { threadId: "th_1", state: "ready", hasReply: true });
+  await feed.update(slot, "ready", "Hello there");
   await waitFor(() => expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/speech/prepare"), expect.objectContaining({ body: expect.stringContaining('"voiceId":"edge:en-GB-SoniaNeural"') })));
   expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/speech/prepare"), expect.objectContaining({ body: expect.stringContaining('"speed":1.2') }));
+});
+
+it("reads a streamed sentence while working, then recovers a missed idle notification without rereading it", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:cue", revokeObjectURL: vi.fn() });
+  let player: FakeAudio;
+  class FakeAudio {
+    onended: (() => void) | null = null;
+    play = vi.fn(async () => {});
+    pause() {} removeAttribute() {} load() {}
+    constructor() { player = this; }
+  }
+  vi.stubGlobal("Audio", FakeAudio);
+  const prepared: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith("/voices")) return { ok: true, json: async () => ({
+      voices: [{ id: "edge:en-GB-SoniaNeural", name: "Sonia", engine: "edge", language: "en-GB", available: true }],
+    }) };
+    if (url.endsWith("/prepare")) prepared.push(JSON.parse(String(options?.body)).text);
+    return { ok: true, json: async () => ({ audioId: "a", url: "/api/v1/plugins/hands-free/http/speech/audio?id=a" }) };
+  }));
+  const feed = replyFeed("thinking");
+  slot = renderSlot(app.navPanels[0]!, { subPath: "th_1" }, {
+    sidebarThreads: { threads: [{ id: "th_1", title: "My thread" } as PluginSidebarThread] },
+    rpc: { replies: feed.replies },
+  });
+  await act(async () => {});
+  feed.append(
+    { kind: "start", turnId: "turn", itemId: "answer", text: "" },
+    { kind: "delta", turnId: "turn", itemId: "answer", text: "The first sentence is ready. Here is" },
+  );
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  expect(prepared).toEqual(["The first sentence is ready."]);
+  expect(slot.getByRole("button", { name: "Stop audio" })).toBeTruthy();
+  feed.append({ kind: "complete", turnId: "turn", itemId: "answer", text: "The first sentence is ready. Here is the rest." });
+  // Change the snapshot without a realtime notification.
+  feed.setState("ready");
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  expect(prepared).toHaveLength(1);
+  await act(async () => { player.onended?.(); });
+  expect(prepared).toEqual(["The first sentence is ready.", "Here is the rest."]);
+  fireEvent.click(slot.getByRole("button", { name: "Stop audio" }));
+  expect((slot.getByRole("button", { name: "Start dictating" }) as HTMLButtonElement).disabled).toBe(false);
 });

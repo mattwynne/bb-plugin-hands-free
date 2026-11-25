@@ -37,3 +37,25 @@ export function plainSpeechText(markdown: string): string {
   });
   return blocks(marked.lexer(markdown)).map(block => block.trim()).filter(Boolean).join("\n");
 }
+
+// Wait for completed Markdown when syntax could span the next delta. Plain
+// prose can be handed to speech as soon as a sentence boundary is stable.
+export function stableSpeechPrefix(text: string): number {
+  if (typeof Intl.Segmenter !== "function") return 0;
+  if (/[<>&*_~`\[\]#|\\\n]/u.test(text) || /^\s*(?:[-+>]\s|\d+\.\s)/u.test(text)) return 0;
+  const sentences = Array.from(new Intl.Segmenter(undefined, { granularity: "sentence" }).segment(text));
+  return sentences.at(-1)?.index ?? 0;
+}
+
+export function speechChunks(markdown: string): string[] {
+  let text = plainSpeechText(markdown);
+  const chunks: string[] = [];
+  while (text.length > 700) {
+    const space = text.slice(0, 700).search(/\s+\S*$/u);
+    const boundary = space > 0 ? space : Array.from(text.slice(0, 701)).slice(0, -1).join("").length;
+    chunks.push(text.slice(0, boundary).trim());
+    text = text.slice(boundary).trimStart();
+  }
+  if (text) chunks.push(text);
+  return chunks;
+}

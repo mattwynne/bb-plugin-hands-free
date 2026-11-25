@@ -5,7 +5,7 @@ import { createVoiceCues, type VoiceCues } from "./voice-cues";
 import { createThinkingLoopUrl } from "./media-ready-cue";
 import { RecordingWaveform } from "./recording-waveform";
 import { prepareSpeech, releaseSpeech } from "./voice-client";
-import { plainSpeechText } from "./speech-text";
+import { speechChunks, stableSpeechPrefix } from "./speech-text";
 import { useVoiceSettings, VoiceSettingsPage, voiceLabel } from "./voice-settings";
 
 // Web Speech is not part of every iOS WebView. Keep the keyboard-dictation
@@ -25,7 +25,8 @@ function recognitionConstructor(): RecognitionConstructor | undefined {
   return browser.SpeechRecognition ?? browser.webkitSpeechRecognition;
 }
 
-const MAX_SPEAK = 4096;
+interface SpeechChunk { turnId: string; text: string }
+interface ReplyDraft { turnId: string; text: string; offset: number }
 function HandsFreePage({ subPath }: { subPath: string }) {
   const rpc = useRpc<typeof rpcContract>();
   const voice = useVoiceSettings();
@@ -70,7 +71,11 @@ function HandsFreePage({ subPath }: { subPath: string }) {
   const captureGeneration = useRef(0);
   const sending = useRef(false);
   const active = useRef(false);
-  const lastSpoken = useRef<string | null>(null);
+  const pendingSpeech = useRef<SpeechChunk[]>([]);
+  const playing = useRef<SpeechChunk | null>(null);
+  const mutedTurns = useRef(new Set<string>());
+  const syncReplies = useRef<() => void>(() => {});
+  const playNext = useRef<() => void>(() => {});
   const cues = useRef<VoiceCues | null>(null);
   const phaseRef = useRef<typeof phase>("loading");
   const phaseToken = useRef(0);
@@ -94,6 +99,7 @@ function HandsFreePage({ subPath }: { subPath: string }) {
 
   const stopAudio = useCallback(() => {
     sequence.current += 1;
+    playing.current = null;
     thinking.current = false;
     if (speechRequest.current) report("speech-cancel", "aborted");
     speechRequest.current?.abort();
@@ -120,7 +126,9 @@ function HandsFreePage({ subPath }: { subPath: string }) {
   }, [report]);
 
   const startThinking = useCallback(() => {
-    if (thinking.current || !thinkingUrl.current || !active.current) return;
+    if (thinking.current || playing.current || !thinkingUrl.current || !active.current) return;
+    if (playbackCleanupTimer.current !== null) clearTimeout(playbackCleanupTimer.current);
+    playbackCleanupTimer.current = null;
     thinking.current = true;
     const player = audio.current ?? new Audio();
     audio.current = player;
@@ -183,22 +191,23 @@ function HandsFreePage({ subPath }: { subPath: string }) {
     setBusy(false);
   }, []);
 
-  const speak = useCallback(async (markdown: string) => {
-    const text = plainSpeechText(markdown);
-    if (!text) { stopAudio(); setNotice("No reply to read yet."); return; }
-    if (text.length > MAX_SPEAK) {
-      stopAudio();
-      setNotice("This reply is too long for the voice view. Open the thread to review it.");
-      return;
-    }
-    if (thinking.current) {
-      sequence.current += 1;
-      cues.current?.stopCue();
-    } else stopAudio();
-    const mine = sequence.current;
+  const mutePlayback = useCallback(() => {
+    if (playing.current) mutedTurns.current.add(playing.current.turnId);
+    for (const chunk of pendingSpeech.current) mutedTurns.current.add(chunk.turnId);
+    pendingSpeech.current = [];
+    stopAudio();
+  }, [stopAudio]);
+
+  const speak = useCallback(async (chunk: SpeechChunk) => {
+    playing.current = chunk;
+    if (playbackCleanupTimer.current !== null) clearTimeout(playbackCleanupTimer.current);
+    playbackCleanupTimer.current = null;
+    cues.current?.stopCue();
+    const mine = ++sequence.current;
+    const { text } = chunk;
     const { selectedVoice, speed } = voiceRef.current;
     if (!selectedVoice.available) {
-      stopAudio();
+      mutePlayback();
       setNotice(`Selected voice unavailable: ${selectedVoice.unavailableReason || "Provider unavailable"}. Choose another Edge voice.`);
       return;
     }
@@ -218,8 +227,27 @@ function HandsFreePage({ subPath }: { subPath: string }) {
       thinking.current = false;
       player.loop = false;
       player.src = data.url;
-      player.onended = () => { if (mine === sequence.current) { report("speech-ended"); finishPlayback(); } };
-      player.onerror = () => { if (mine === sequence.current) { report("speech-error", player.error?.code === MediaError.MEDIA_ERR_NETWORK ? "network" : "other"); finishPlayback(); setNotice("Audio interrupted. Open the thread to read this reply."); } };
+      player.onended = () => {
+        if (mine !== sequence.current) return;
+        report("speech-ended");
+        releaseSpeech(data.audioId);
+        speechId.current = null;
+        playing.current = null;
+        if (pendingSpeech.current.length) playNext.current();
+        else if (phaseRef.current === "ready") {
+          finishPlayback();
+          setNotice("Ready. Tap to talk.");
+        } else {
+          setSpeaking(false);
+          setNotice("Waiting for more from the agent…");
+        }
+      };
+      player.onerror = () => {
+        if (mine !== sequence.current) return;
+        report("speech-error", player.error?.code === MediaError.MEDIA_ERR_NETWORK ? "network" : "other");
+        mutePlayback();
+        setNotice("Audio interrupted. Open the thread to read this reply.");
+      };
       player.onplaying = () => { if (mine === sequence.current) report("speech-playing"); };
       player.onpause = () => { if (mine === sequence.current) report("speech-pause", "paused"); };
       report("speech-play");
@@ -236,38 +264,119 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         audio.current.load();
         audio.current = null;
       }
-      stopAudio();
+      mutePlayback();
       setNotice(`${error instanceof Error ? error.message : "Speech playback failed"}. Try again or choose another Edge voice.`);
     }
-  }, [stopAudio, finishPlayback, report]);
+  }, [mutePlayback, finishPlayback, report]);
+
+  const playQueuedSpeech = useCallback(() => {
+    if (playing.current || recorder.current || recognition.current || phaseRef.current === "attention") return;
+    const chunk = pendingSpeech.current.shift();
+    if (chunk) void speak(chunk);
+  }, [speak]);
 
   useEffect(() => {
+    playNext.current = playQueuedSpeech;
     cancelCapture();
     setFallbackText("");
     setShowFallback(false);
     setRetryText(null);
     setArchivedId(null);
-    lastSpoken.current = null;
+    pendingSpeech.current = [];
+    mutedTurns.current.clear();
     active.current = true;
-    const token = transition("loading");
+    transition("loading");
     setNotice(selectedId ? "Checking thread status…" : "Choose a thread to begin.");
     stopAudio();
-    if (selectedId) {
-      void rpc.call("state", { threadId: selectedId }).then(({ state }) => {
-        if (!active.current || selectedRef.current !== selectedId || phaseToken.current !== token) return;
-        transition(state);
-        // Opening/selecting a ready thread is not a recording or reply event.
-        if (state === "ready") setNotice("Ready. Tap to talk.");
-        else if (state === "attention") setNotice("Agent needs your attention. Open the thread to respond.");
-        else setNotice("Agent is thinking. Talk is disabled until it finishes.");
-      }, () => {
-        if (active.current && selectedRef.current === selectedId && phaseToken.current === token) {
-          transition("attention");
-          setNotice("Could not check thread status. Reopen Hands-Free to retry.");
+
+    let disposed = false;
+    let inFlight = false;
+    let requested = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let cursor: number | undefined;
+    const drafts = new Map<string, ReplyDraft>();
+
+    const enqueue = (turnId: string, text: string) => {
+      if (mutedTurns.current.has(turnId)) return;
+      for (const chunk of speechChunks(text)) pendingSpeech.current.push({ turnId, text: chunk });
+    };
+
+    const sync = async () => {
+      if (!selectedId || disposed) return;
+      if (inFlight) { requested = true; return; }
+      clearTimeout(timer);
+      inFlight = true;
+      requested = false;
+      const token = phaseToken.current;
+      try {
+        const result = await rpc.call("replies", cursor === undefined ? { threadId: selectedId } : { threadId: selectedId, after: cursor });
+        if (disposed || selectedRef.current !== selectedId) return;
+        if (token !== phaseToken.current || (sending.current && result.state === "ready")) {
+          // A send started while this request was outstanding. Keep the cursor
+          // so the next read can reconcile the actual turn.
+          return;
         }
-      });
-    }
+        cursor = result.cursor;
+        requested ||= result.more;
+        if (result.archived) {
+          setArchivedId(selectedId);
+          if (recorder.current || recognition.current) cancelCapture();
+        }
+        for (const event of result.events) {
+          const key = JSON.stringify([event.turnId, event.itemId]);
+          if (event.kind === "start") {
+            drafts.set(key, { turnId: event.turnId, text: event.text, offset: 0 });
+            continue;
+          }
+          const draft = drafts.get(key);
+          if (event.kind === "complete") {
+            const consumed = draft?.text.slice(0, draft.offset) ?? "";
+            const remaining = event.text.startsWith(consumed) ? event.text.slice(consumed.length) : draft?.text.slice(draft.offset);
+            enqueue(event.turnId, remaining || (!consumed ? draft?.text ?? "" : ""));
+            drafts.delete(key);
+            continue;
+          }
+          if (!draft) continue; // A message already in flight when this view opened.
+          draft.text += event.text;
+          const pending = draft.text.slice(draft.offset);
+          const length = stableSpeechPrefix(pending);
+          if (length) {
+            enqueue(event.turnId, pending.slice(0, length));
+            draft.offset += length;
+          }
+        }
+
+        const settled = !result.more && (result.state === "ready" || result.state === "failed");
+        if (settled) {
+          for (const draft of drafts.values()) enqueue(draft.turnId, draft.text.slice(draft.offset));
+          drafts.clear();
+        }
+        const previous = phaseRef.current;
+        const next = result.state === "failed" ? "ready" : result.state;
+        if (next !== previous && (!result.more || next !== "ready")) {
+          if (next !== "ready" && (recorder.current || recognition.current)) cancelCapture();
+          transition(next, next === "ready" && Boolean(playing.current || pendingSpeech.current.length));
+          if (result.state === "failed") setNotice("Agent stopped with an error. Open the thread to inspect it.");
+          else if (next === "attention") setNotice("Agent needs your attention. Open the thread to respond.");
+          else if (!playing.current && !pendingSpeech.current.length) {
+            setNotice(next === "ready" ? "Ready. Tap to talk." : "Agent is thinking. Talk is disabled until it finishes.");
+            if (next === "ready" && previous !== "loading") void cues.current?.ready();
+          }
+        }
+        playQueuedSpeech();
+      } catch {
+        if (!disposed && phaseRef.current === "loading") setNotice("Could not check thread status. Retrying…");
+      } finally {
+        inFlight = false;
+        if (!disposed) timer = setTimeout(sync, requested ? 0 : phaseRef.current === "ready" ? 4000 : 1000);
+      }
+    };
+    syncReplies.current = () => { void sync(); };
+    void sync();
     return () => {
+      disposed = true;
+      clearTimeout(timer);
+      syncReplies.current = () => {};
       active.current = false;
       phaseToken.current += 1;
       cancelCapture();
@@ -278,51 +387,11 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         audio.current = null;
       }
     };
-  }, [selectedId, stopAudio, rpc, transition, cancelCapture]);
+  }, [selectedId, stopAudio, rpc, transition, cancelCapture, playQueuedSpeech]);
 
-  const readNewReply = useCallback(async (threadId: string, token: number) => {
-    try {
-      const result = await rpc.call("latest", { threadId });
-      if (!active.current || selectedRef.current !== threadId || phaseToken.current !== token) return;
-      if (!result.text || lastSpoken.current === result.text) { stopAudio(); cues.current?.ready(); return; }
-      lastSpoken.current = result.text;
-      await speak(result.text);
-    } catch (error) {
-      if (active.current && selectedRef.current === threadId && phaseToken.current === token) {
-        stopAudio();
-        cues.current?.ready();
-        setNotice(error instanceof Error ? `Could not read reply: ${error.message}` : "Could not read reply.");
-      }
-    }
-  }, [rpc, speak, stopAudio]);
   useRealtime("hands-free/thread-state", (payload) => {
-    if (!payload || typeof payload !== "object" || !("threadId" in payload) || !("state" in payload)) return;
-    if (typeof payload.threadId !== "string" || payload.threadId !== selectedRef.current || !active.current) return;
-    if (payload.state === "archived") {
-      setArchivedId(payload.threadId);
-      if (listening || recorder.current || recognition.current) cancelCapture();
-      // Keep speech and any in-flight latest/prepare request alive.
-    } else if (payload.state === "thinking") {
-      report("thinking");
-      if (listening || recorder.current || recognition.current) cancelCapture();
-      if (!thinking.current) stopAudio();
-      transition("thinking");
-      setNotice("Agent is thinking. Talk is disabled until it finishes.");
-    } else if (payload.state === "attention") {
-      if (listening || recorder.current || recognition.current) cancelCapture();
-      stopAudio();
-      transition("attention");
-      setNotice("Agent needs your attention. Open the thread to respond.");
-    } else if (payload.state === "failed") {
-      stopAudio();
-      transition("ready");
-      cues.current?.ready();
-      setNotice("Agent stopped with an error. Open the thread to inspect it.");
-    } else if (payload.state === "ready") {
-      const hasReply = "hasReply" in payload && payload.hasReply === true;
-      const token = transition("ready", hasReply);
-      if (hasReply) void readNewReply(payload.threadId, token);
-      else { cues.current?.ready(); setNotice("Ready. Tap to talk."); }
+    if (payload && typeof payload === "object" && "threadId" in payload && payload.threadId === selectedRef.current) {
+      syncReplies.current();
     }
   });
 
@@ -359,7 +428,10 @@ function HandsFreePage({ subPath }: { subPath: string }) {
       }
     } finally {
       sending.current = false;
-      if (active.current && selectedRef.current === threadId) setBusy(false);
+      if (active.current && selectedRef.current === threadId) {
+        setBusy(false);
+        syncReplies.current();
+      }
     }
   };
 
@@ -541,7 +613,10 @@ function HandsFreePage({ subPath }: { subPath: string }) {
         {selectedId && !selected && threadsStatus !== "loading" && <p role="alert">Thread not in the current list. Select another thread.</p>}
         {selected && (archived || unavailable) && <p role="status">{archived ? "Thread archived." : "Thread no longer in the current list."} {speaking ? "The reply is still playing; you can stop it at any time." : "Any final reply can still play here. Choose another thread to dictate."}</p>}
         <div className="flex justify-center py-2">
-          <button type="button" disabled={controlDisabled} onClick={speaking ? stopAudio : listening ? stopListening : startListening}
+          <button type="button" disabled={controlDisabled} onClick={speaking ? () => {
+            mutePlayback();
+            setNotice(phaseRef.current === "ready" ? "Ready. Tap to talk." : "Audio stopped. Waiting for the agent.");
+          } : listening ? stopListening : startListening}
             className="inline-flex size-28 shrink-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-full bg-foreground text-background transition-colors duration-150 hover:bg-foreground/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-40"
             aria-pressed={listening} aria-label={controlLabel} data-control-state={controlState}>
             <Icon name={controlIcon} className={`size-9 ${controlState === "working" ? "animate-spin motion-reduce:animate-none" : controlState === "playback" ? "fill-current [&_*]:stroke-0" : ""}`} aria-hidden />

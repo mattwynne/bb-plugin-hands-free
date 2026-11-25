@@ -38,21 +38,39 @@ describe("hands-free", () => {
   });
 
   it("reads only the requested thread and broadcasts an id without content", async () => {
-    const output = vi.fn(async () => ({ output: "Private answer" }));
-    const { bb, harness } = createFakePluginHost({ pluginId: "hands-free", sdk: { threads: { output } } });
+    const thread = makeThreadResponse({ id: "th_1", status: "active" });
+    const scope = { kind: "turn", turnId: "turn-1" };
+    const rows = [
+      { seq: 9, scope, type: "item/agentMessage/delta", data: { itemId: "answer", delta: "First sentence." } },
+      { seq: 10, scope, type: "item/agentMessage/delta", data: { itemId: "nested", parentToolCallId: "tool", delta: "Nested output" } },
+      { seq: 11, scope, type: "item/completed", data: { item: { id: "answer", type: "agentMessage", text: "First sentence. Second sentence." } } },
+    ];
+    const list = vi.fn().mockResolvedValueOnce([{ seq: 8 }]).mockResolvedValueOnce(rows);
+    const { bb, harness } = createFakePluginHost({ pluginId: "hands-free", sdk: {
+      threads: { get: async () => thread, events: { list }, interactions: { list: async () => [] } },
+    } });
     plugin(bb);
-    expect(await harness.behavior.callRpc("latest", { threadId: "th_1" })).toEqual({ text: "Private answer" });
-    expect(output).toHaveBeenCalledWith({ threadId: "th_1" });
-    await harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "th_1" }), lastAssistantText: "Private answer" });
-    expect(harness.realtimeSignals).toContainEqual({ channel: "hands-free/thread-state", payload: { threadId: "th_1", state: "ready", hasReply: true } });
-    await harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "th_1" }), lastAssistantText: null });
-    expect(harness.realtimeSignals.at(-1)).toEqual({ channel: "hands-free/thread-state", payload: { threadId: "th_1", state: "ready", hasReply: false } });
-    await harness.behavior.emitThreadEvent("thread.archived", { thread: makeThreadResponse({ id: "th_1" }) });
-    expect(harness.realtimeSignals.at(-1)).toEqual({ channel: "hands-free/thread-state", payload: { threadId: "th_1", state: "archived" } });
+    expect(await harness.behavior.callRpc("replies", { threadId: "th_1" })).toEqual({
+      state: "thinking", archived: false, cursor: 8, more: false, events: [],
+    });
+    expect(await harness.behavior.callRpc("replies", { threadId: "th_1", after: 8 })).toEqual({
+      state: "thinking", archived: false, cursor: 11, more: false,
+      events: [
+        { kind: "delta", turnId: "turn-1", itemId: "answer", text: "First sentence." },
+        { kind: "complete", turnId: "turn-1", itemId: "answer", text: "First sentence. Second sentence." },
+      ],
+    });
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ threadId: "th_1", afterSeq: "8", order: "asc" }));
+    await harness.behavior.emitThreadEvent("experimental_thread.events", { thread, sequence: 11 });
+    await harness.behavior.emitThreadEvent("thread.idle", { thread, lastAssistantText: "Private answer" });
+    expect(harness.realtimeSignals).toEqual([
+      { channel: "hands-free/thread-state", payload: { threadId: "th_1" } },
+      { channel: "hands-free/thread-state", payload: { threadId: "th_1" } },
+    ]);
     await harness.lifecycle.dispose();
   });
 
-  it("checks live thread state and signals thinking, attention, and failure", async () => {
+  it("distinguishes active work, pending approval, and sendable states", async () => {
     const get = vi.fn(async () => makeThreadResponse({ id: "th_1", status: "active" }));
     const pending = vi.fn(async (): Promise<unknown[]> => []);
     const { bb, harness } = createFakePluginHost({ pluginId: "hands-free", sdk: {
@@ -64,10 +82,8 @@ describe("hands-free", () => {
     expect(await harness.behavior.callRpc("state", { threadId: "th_1" })).toEqual({ state: "attention" });
     get.mockResolvedValueOnce(makeThreadResponse({ id: "th_1", status: "idle" }));
     expect(await harness.behavior.callRpc("state", { threadId: "th_1" })).toEqual({ state: "ready" });
-    await harness.behavior.emitThreadEvent("thread.active", { thread: makeThreadResponse({ id: "th_1" }) });
-    await harness.behavior.emitThreadEvent("thread.failed", { thread: makeThreadResponse({ id: "th_1" }), error: "oops" });
-    expect(harness.realtimeSignals).toContainEqual({ channel: "hands-free/thread-state", payload: { threadId: "th_1", state: "thinking" } });
-    expect(harness.realtimeSignals).toContainEqual({ channel: "hands-free/thread-state", payload: { threadId: "th_1", state: "failed" } });
+    get.mockResolvedValueOnce(makeThreadResponse({ id: "th_1", status: "pending" }));
+    expect(await harness.behavior.callRpc("state", { threadId: "th_1" })).toEqual({ state: "ready" });
     await harness.lifecycle.dispose();
   });
 
