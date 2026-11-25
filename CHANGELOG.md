@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-25
+
+- Read plain-text sentences while the agent is still responding and pronounce Markdown as plain text when the message completes.
+- Recover from missed thread updates so Hands-Free leaves “Thinking” and can read replies after the agent finishes.
+- Read long replies in smaller audio segments. Stop audio silences the rest of the current turn.
+
 ## [0.2.3] - 2026-10-21
 
 - Restore spoken replies when Microsoft's neural speech service rejects the older connection authentication.

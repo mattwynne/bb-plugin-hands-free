@@ -5,7 +5,7 @@ A large-button, tap-to-talk and spoken-reply companion for **BB in a mobile brow
 ## Install
 
 ```sh
-bb plugin install git:https://github.com/mattwynne/bb-plugin-hands-free.git@^0.2.1
+bb plugin install git:https://github.com/mattwynne/bb-plugin-hands-free.git@^0.2.4
 ```
 
 Edge voices need no API key. Recording transcription remains separate and uses BB's configured transcription service (see `bb settings ai-services`). **The voices you hear are AI-generated, not human.** Choose an Edge voice and speaking speed in Hands-Free settings. The default is Sonia; saved device/OpenAI selections migrate to Sonia while retaining speed. Browser speech recognition remains available as a microphone transcription fallback, not a speech-output engine.

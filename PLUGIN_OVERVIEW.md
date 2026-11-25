@@ -2,7 +2,7 @@ Speak to a BB thread on your iPhone and hear the reply aloud.
 
 ## How it works
 
-Open Hands-Free, choose a thread, and tap the microphone to dictate. Tap again to send. When the agent finishes, Hands-Free reads its reply while the page stays open. You can open Thread activity to see what's happening.
+Open Hands-Free, choose a thread, and tap the microphone to dictate. Tap the up arrow to send. Hands-Free reads the agent’s replies as they arrive while the page stays open. You can open Thread activity to see what's happening.
 
 ## Before you use it
 
